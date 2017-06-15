@@ -61,6 +61,11 @@ extern void RegisterNodes(void);
 #define OUTFUNC_ARGS StringInfo str, const Node *raw_node
 #endif
 
+#if (PG_VERSION_NUM >= 90600)
+#define COPYFUNC_ARGS struct ExtensibleNode *newnodeE, \
+	const struct ExtensibleNode *oldnodeE
+#endif
+
 extern READFUNC_RET ReadJob(READFUNC_ARGS);
 extern READFUNC_RET ReadMultiPlan(READFUNC_ARGS);
 extern READFUNC_RET ReadShardInterval(READFUNC_ARGS);
@@ -91,5 +96,16 @@ extern void OutMultiJoin(OUTFUNC_ARGS);
 extern void OutMultiPartition(OUTFUNC_ARGS);
 extern void OutMultiCartesianProduct(OUTFUNC_ARGS);
 extern void OutMultiExtendedOp(OUTFUNC_ARGS);
+
+#if (PG_VERSION_NUM >= 90600)
+extern void CopyNodeJob(COPYFUNC_ARGS);
+extern void CopyNodeMultiPlan(COPYFUNC_ARGS);
+extern void CopyNodeShardInterval(COPYFUNC_ARGS);
+extern void CopyNodeMapMergeJob(COPYFUNC_ARGS);
+extern void CopyNodeShardPlacement(COPYFUNC_ARGS);
+extern void CopyNodeRelationShard(COPYFUNC_ARGS);
+extern void CopyNodeTask(COPYFUNC_ARGS);
+extern void CopyNodeDeferredErrorMessage(COPYFUNC_ARGS);
+#endif
 
 #endif /* CITUS_NODEFUNCS_H */

@@ -419,6 +419,9 @@ GetMultiPlan(CustomScan *customScan)
 static Node *
 SerializeMultiPlan(MultiPlan *multiPlan)
 {
+#if (PG_VERSION_NUM >= 90600)
+	return (Node *) multiPlan;
+#else
 	char *serializedMultiPlan = NULL;
 	Const *multiPlanData = NULL;
 
@@ -432,6 +435,7 @@ SerializeMultiPlan(MultiPlan *multiPlan)
 	multiPlanData->location = -1;
 
 	return (Node *) multiPlanData;
+#endif
 }
 
 
@@ -442,6 +446,10 @@ SerializeMultiPlan(MultiPlan *multiPlan)
 static MultiPlan *
 DeserializeMultiPlan(Node *node)
 {
+#if (PG_VERSION_NUM >= 90600)
+	Assert(CitusIsA(node, MultiPlan));
+	return (MultiPlan *) node;
+#else
 	Const *multiPlanData = NULL;
 	char *serializedMultiPlan = NULL;
 	MultiPlan *multiPlan = NULL;
@@ -454,6 +462,7 @@ DeserializeMultiPlan(Node *node)
 	Assert(CitusIsA(multiPlan, MultiPlan));
 
 	return multiPlan;
+#endif
 }
 
 
