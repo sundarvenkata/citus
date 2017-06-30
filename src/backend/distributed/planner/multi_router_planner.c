@@ -166,14 +166,23 @@ CreateModifyPlan(Query *originalQuery, Query *query,
 		return multiPlan;
 	}
 
-	targetShardInterval = TargetShardIntervalForModify(distributedTableId, query,
-													   &multiPlan->planningError);
-	if (multiPlan->planningError != NULL)
+	if (multiPlan->operation == CMD_UPDATE)
 	{
-		return multiPlan;
+		RelationRestrictionContext *restrictionContext =
+			plannerRestrictionContext->relationRestrictionContext;
+		task = RouterSelectTask(originalQuery, restrictionContext, &placementList);
 	}
+	else
+	{
+		targetShardInterval = TargetShardIntervalForModify(distributedTableId, query,
+														   &multiPlan->planningError);
+		if (multiPlan->planningError != NULL)
+		{
+			return multiPlan;
+		}
 
-	task = RouterModifyTask(distributedTableId, originalQuery, targetShardInterval);
+		task = RouterModifyTask(distributedTableId, originalQuery, targetShardInterval);
+	}
 
 	ereport(DEBUG2, (errmsg("Creating router plan")));
 
@@ -479,7 +488,7 @@ ModifyQuerySupported(Query *queryTree)
 	 * Reject subqueries which are in SELECT or WHERE clause.
 	 * Queries which include subqueries in FROM clauses are rejected below.
 	 */
-	if (queryTree->hasSubLinks == true)
+	if (queryTree->hasSubLinks == true && commandType != CMD_UPDATE)
 	{
 		return DeferredError(ERRCODE_FEATURE_NOT_SUPPORTED,
 							 "subqueries are not supported in distributed modifications",
@@ -542,6 +551,12 @@ ModifyQuerySupported(Query *queryTree)
 		{
 			hasValuesScan = true;
 		}
+		else if (commandType == CMD_UPDATE &&
+				 (rangeTableEntry->rtekind == RTE_SUBQUERY ||
+				  rangeTableEntry->rtekind == RTE_JOIN))
+		{
+			continue;
+		}
 		else
 		{
 			/*
@@ -585,7 +600,7 @@ ModifyQuerySupported(Query *queryTree)
 	 * Queries like "INSERT INTO table_name ON CONFLICT DO UPDATE (col) SET other_col = ''"
 	 * contains two range table entries, and we have to allow them.
 	 */
-	if (commandType != CMD_INSERT && queryTableCount != 1)
+	if (commandType == CMD_DELETE && queryTableCount != 1)
 	{
 		return DeferredError(ERRCODE_FEATURE_NOT_SUPPORTED,
 							 "cannot perform distributed planning for the given"
@@ -1569,7 +1584,7 @@ RouterSelectQuery(Query *originalQuery, RelationRestrictionContext *restrictionC
 		return false;
 	}
 
-	Assert(commandType == CMD_SELECT);
+	Assert(commandType == CMD_SELECT || commandType == CMD_UPDATE);
 
 	foreach(prunedRelationShardListCell, prunedRelationShardList)
 	{
@@ -1682,7 +1697,7 @@ TargetShardIntervalsForSelect(Query *query,
 	List *prunedRelationShardList = NIL;
 	ListCell *restrictionCell = NULL;
 
-	Assert(query->commandType == CMD_SELECT);
+	Assert(query->commandType == CMD_SELECT || query->commandType == CMD_UPDATE);
 	Assert(restrictionContext != NULL);
 
 	foreach(restrictionCell, restrictionContext->relationRestrictionList)
