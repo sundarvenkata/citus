@@ -429,3 +429,116 @@ INSERT INTO app_analytics_events (app_id, name) VALUES (102, 'Wayz') RETURNING i
 INSERT INTO app_analytics_events (app_id, name) VALUES (103, 'Mynt') RETURNING *;
 
 DROP TABLE app_analytics_events;
+
+-- test UPDATE with subqueries
+CREATE TABLE raw_table (id bigint, value bigint);
+CREATE TABLE limits_table (id bigint, lower_limit numeric);
+CREATE TABLE summary_table (
+	id bigint,
+	min_value numeric,
+	average_value numeric,
+	count int,
+	uniques int);
+
+
+SELECT create_distributed_table('raw_table', 'id');
+SELECT create_distributed_table('limits_table', 'id');
+SELECT create_distributed_table('summary_table', 'id');
+
+INSERT INTO raw_table VALUES (1, 100);
+INSERT INTO raw_table VALUES (1, 200);
+INSERT INTO raw_table VALUES (1, 200);
+INSERT INTO raw_table VALUES (1, 300);
+INSERT INTO raw_table VALUES (2, 400);
+INSERT INTO raw_table VALUES (2, 500);
+
+INSERT INTO limits_table VALUES (1, 200);
+INSERT INTO limits_table VALUES (2, 200);
+
+INSERT INTO summary_table VALUES (1);
+INSERT INTO summary_table VALUES (2);
+
+SELECT * FROM summary_table WHERE id = 1;
+
+UPDATE summary_table SET average_value = average_query.average FROM (
+	SELECT avg(value) AS average FROM raw_table WHERE id = 1
+	) average_query
+WHERE id = 1;
+
+SELECT * FROM summary_table WHERE id = 1;
+
+-- try different syntax
+UPDATE summary_table SET (min_value, average_value) =
+	(SELECT min(value), avg(value) FROM raw_table WHERE id = 2)
+WHERE id = 2;
+
+SELECT * FROM summary_table WHERE id = 2;
+
+UPDATE summary_table SET min_value = 100
+	WHERE id IN (SELECT id FROM raw_table WHERE id = 1 and value > 100) AND id = 1;
+
+SELECT * FROM summary_table WHERE id = 1;
+
+-- test unsupported query types
+UPDATE summary_table SET average_value = average_query.average FROM (
+	SELECT avg(value) AS average FROM raw_table WHERE id = 1 AND id = 4
+	) average_query
+WHERE id = 1 AND id = 4;
+
+UPDATE summary_table SET average_value = average_query.average FROM (
+	SELECT avg(value) AS average FROM raw_table WHERE id = 1 AND id = 4
+	) average_query
+WHERE id = 1;
+
+UPDATE summary_table SET average_value = average_query.average FROM (
+	SELECT avg(value) AS average FROM raw_table WHERE id = 1
+	) average_query
+WHERE id = 1 AND id = 4;
+
+UPDATE summary_table SET average_value = average_query.average FROM (
+	SELECT avg(value) AS average FROM raw_table) average_query;
+
+UPDATE summary_table SET average_value = average_value + 1 WHERE id =
+  (SELECT id FROM raw_table WHERE value > 100);
+
+-- test complex queries
+UPDATE summary_table
+SET
+       uniques = metrics.expensive_uniques,
+       count = metrics.total_count
+FROM
+		(SELECT
+			id,
+			count(DISTINCT (CASE WHEN value > 100 then value end)) AS expensive_uniques,
+			count(value) AS total_count
+        FROM raw_table
+        WHERE id = 1
+        GROUP BY id) metrics
+WHERE
+   summary_table.id = metrics.id AND
+   summary_table.id = 1;
+
+SELECT * FROM summary_table WHERE id = 1;
+
+-- test joins in subquery
+UPDATE summary_table
+SET
+       count = metrics.total_count
+FROM
+		(SELECT
+			raw_table.id,
+			count(value) AS total_count
+        FROM raw_table, limits_table
+        WHERE raw_table.id = limits_table.id AND
+        	  raw_table.value > limits_table.lower_limit AND
+        	  raw_table.id = 1
+        GROUP BY raw_table.id) metrics
+WHERE
+   summary_table.id = metrics.id AND
+   summary_table.id = 1;
+
+SELECT * FROM summary_table WHERE id = 1;
+
+DROP TABLE raw_table;
+DROP TABLE limits_table;
+DROP TABLE summary_table;

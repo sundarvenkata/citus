@@ -91,8 +91,8 @@ INSERT INTO articles VALUES (50, 10, 'anjanette', 19519);
 INSERT INTO articles_single_shard VALUES (50, 10, 'anjanette', 19519);
 -- zero-shard modifications should fail
 UPDATE articles SET title = '' WHERE author_id = 1 AND author_id = 2;
-ERROR:  cannot run UPDATE command which targets no shards
-HINT:  Consider using an equality filter on partition column "author_id" to target a single shard. If you'd like to run a multi-shard operation, use master_modify_multiple_shards().
+ERROR:  can not plan for router query
+HINT:  Make sure that your query hits single shard.
 DELETE FROM articles WHERE author_id = 1 AND author_id = 2;
 ERROR:  cannot run DELETE command which targets no shards
 HINT:  Consider using an equality filter on partition column "author_id" to target a single shard. If you'd like to run a multi-shard operation, use master_modify_multiple_shards().
