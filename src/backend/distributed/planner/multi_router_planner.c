@@ -170,8 +170,8 @@ CreateModifyPlan(Query *originalQuery, Query *query,
 	{
 		RelationRestrictionContext *restrictionContext =
 			plannerRestrictionContext->relationRestrictionContext;
-		task = RouterSelectTask(originalQuery, restrictionContext, &placementList);
 
+		task = RouterSelectTask(originalQuery, restrictionContext, &placementList);
 		if (task == NULL)
 		{
 			multiPlan->planningError = DeferredError(ERRCODE_FEATURE_NOT_SUPPORTED,
@@ -1605,7 +1605,14 @@ RouterSelectQuery(Query *originalQuery, RelationRestrictionContext *restrictionC
 		/* no shard is present or all shards are pruned out case will be handled later */
 		if (prunedShardList == NIL)
 		{
-			continue;
+			if (commandType == CMD_UPDATE)
+			{
+				return false;
+			}
+			else
+			{
+				continue;
+			}
 		}
 
 		shardsPresent = true;
