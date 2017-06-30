@@ -171,6 +171,15 @@ CreateModifyPlan(Query *originalQuery, Query *query,
 		RelationRestrictionContext *restrictionContext =
 			plannerRestrictionContext->relationRestrictionContext;
 		task = RouterSelectTask(originalQuery, restrictionContext, &placementList);
+
+		if (task == NULL)
+		{
+			multiPlan->planningError = DeferredError(ERRCODE_FEATURE_NOT_SUPPORTED,
+													 "can not plan for router query",
+													 NULL,
+													 "Make sure that your query hits single shard.");
+			return multiPlan;
+		}
 	}
 	else
 	{
