@@ -1548,9 +1548,17 @@ RouterSelectTask(Query *originalQuery, RelationRestrictionContext *restrictionCo
 	pg_get_query_def(originalQuery, queryString);
 
 	task = CitusMakeNode(Task);
+	if (originalQuery->commandType == CMD_UPDATE)
+	{
+		task->taskType = MODIFY_TASK;
+	}
+	else
+	{
+		task->taskType = ROUTER_TASK;
+	}
+
 	task->jobId = INVALID_JOB_ID;
 	task->taskId = INVALID_TASK_ID;
-	task->taskType = ROUTER_TASK;
 	task->queryString = queryString->data;
 	task->anchorShardId = shardId;
 	task->replicationModel = REPLICATION_MODEL_INVALID;
