@@ -20,10 +20,41 @@
 #include "storage/latch.h"
 
 
+/*
+ * MultiConnectionWaiter is used to wait for results on a set of connections.
+ * The connections array contains all pending connections, starting at currentOffset.
+ * After a call to AwaitReadyConnections, any connections which are still
+ * pending are moved to the end of the array.
+ */
+typedef struct MultiConnectionWaiter
+{
+	/* number of connections to wait for */
+	int connectionCount;
+
+	/* connections to wait for, pending connections are moved to the end */
+	MultiConnection **connections;
+
+	/* pending connections start at this offset */
+	int currentOffset;
+
+	/* pre-allocated event array for WaitEventSetWait results */
+	WaitEvent *events;
+} MultiConnectionWaiter;
+
+
 /* GUC, determining whether statements sent to remote nodes are logged */
 bool LogRemoteCommands = false;
 
+
 static bool FinishConnectionIO(MultiConnection *connection, bool raiseInterrupts);
+static MultiConnectionWaiter * CreateMultiConnectionWaiter(List *connectionList);
+static List * AwaitReadyConnections(MultiConnectionWaiter *waiter,
+									bool raiseInterrupts);
+static void WaitForReadyConnections(MultiConnectionWaiter *waiter,
+									WaitEventSet *waitEventSet, bool *connectionReady,
+									bool raiseInterrupts);
+static void FreeMultiConnectionWaiter(MultiConnectionWaiter *waiter);
+
 
 /* simple helpers */
 
@@ -651,4 +682,303 @@ FinishConnectionIO(MultiConnection *connection, bool raiseInterrupts)
 	}
 
 	return false;
+}
+
+
+/*
+ * WaitForAllConnections blocks until all connections in the list are no
+ * longer busy, meaning the pending command has either finished or failed.
+ */
+void
+WaitForAllConnections(List *connectionList, bool raiseInterrupts)
+{
+	MultiConnectionWaiter *waiter = CreateMultiConnectionWaiter(connectionList);
+
+	while (AwaitReadyConnections(waiter, raiseInterrupts) != NIL)
+	{
+		/* call AwaitReadyConnections until it processed all connections */
+	}
+
+	FreeMultiConnectionWaiter(waiter);
+}
+
+
+/*
+ * CreateMultiConnectionWaiter creates a MultiConnectionWaiter for the given list
+ * of connections. Connections should not be in a closed state.
+ */
+static MultiConnectionWaiter *
+CreateMultiConnectionWaiter(List *connectionList)
+{
+	MultiConnectionWaiter *waiter = NULL;
+	ListCell *connectionCell = NULL;
+	int totalConnectionCount = list_length(connectionList);
+
+	waiter = (MultiConnectionWaiter *) palloc0(sizeof(MultiConnectionWaiter));
+	waiter->connectionCount = 0;
+	waiter->currentOffset = 0;
+
+	waiter->connections =
+		(MultiConnection **) palloc(totalConnectionCount * sizeof(MultiConnection *));
+
+	foreach(connectionCell, connectionList)
+	{
+		MultiConnection *connection = (MultiConnection *) lfirst(connectionCell);
+
+		waiter->connections[waiter->connectionCount] = connection;
+		waiter->connectionCount++;
+	}
+
+	waiter->events = (WaitEvent *) palloc0(totalConnectionCount * sizeof(WaitEvent));
+
+	return waiter;
+}
+
+
+/*
+ * AwaitReadyConnections waits for I/O events and returns a list of connections
+ * that finished or failed. Each connection is returned at most once across multiple
+ * calls.
+ *
+ * When all connections are ready and were returned as part of a list,
+ * AwaytReadyConnections returns an empty list.
+ *
+ * To keep track of which connections were already returned, pending connections
+ * are moved to the end of the connections array, starting at currentOffset.
+ */
+static List *
+AwaitReadyConnections(MultiConnectionWaiter *waiter, bool raiseInterrupts)
+{
+	MultiConnection **allConnections = waiter->connections;
+	bool connectionReady[waiter->connectionCount];
+	bool foundReadyConnections = false;
+	List *readyConnectionList = NIL;
+	WaitEventSet *waitEventSet = NULL;
+	int connectionCount = waiter->connectionCount;
+	int pendingConnectionsStartIndex = waiter->currentOffset;
+	int pendingConnectionCount = connectionCount - pendingConnectionsStartIndex;
+	int connectionIndex = 0;
+
+	if (waiter->currentOffset == connectionCount)
+	{
+		/* already processed all connections */
+		return NIL;
+	}
+
+	/*
+	 * Ideally, we'd store the WaitEventSet in MultiConnectionWaiter and reuse it across
+	 * different calls to AwaitReadyConnections. However, we currently don't have a
+	 * way to stop listening for a connection in a WaitEventSet once it's ready, since
+	 * ModifyWaitEvent has an assert preventing the caller from clearing the event mask
+	 * event masks. This should be revisited in future postgres versions.
+	 */
+	waitEventSet = CreateWaitEventSet(CurrentMemoryContext, pendingConnectionCount + 2);
+
+	for (connectionIndex = pendingConnectionsStartIndex;
+		 connectionIndex < connectionCount; connectionIndex++)
+	{
+		MultiConnection *connection = allConnections[connectionIndex];
+		int socket = PQsocket(connection->pgConn);
+		int eventMask = WL_SOCKET_READABLE;
+		bool connectionFailed = false;
+
+		if (PQstatus(connection->pgConn) == CONNECTION_BAD)
+		{
+			connectionFailed = true;
+		}
+		else
+		{
+			int sendStatus = PQflush(connection->pgConn);
+			if (sendStatus == -1)
+			{
+				connectionFailed = true;
+			}
+			else if (sendStatus == 1)
+			{
+				/* more data to flush */
+				eventMask |= WL_SOCKET_WRITEABLE;
+			}
+		}
+
+		if (!connectionFailed && PQisBusy(connection->pgConn))
+		{
+			connectionReady[connectionIndex] = false;
+			AddWaitEventToSet(waitEventSet, eventMask, socket, NULL, (void *) connection);
+		}
+		else
+		{
+			connectionReady[connectionIndex] = true;
+			foundReadyConnections = true;
+		}
+	}
+
+	/* if we already detected some failures we skip waiting */
+	if (!foundReadyConnections)
+	{
+		AddWaitEventToSet(waitEventSet, WL_POSTMASTER_DEATH, PGINVALID_SOCKET, NULL,
+						  NULL);
+		AddWaitEventToSet(waitEventSet, WL_LATCH_SET, PGINVALID_SOCKET, MyLatch, NULL);
+
+		PG_TRY();
+		{
+			WaitForReadyConnections(waiter, waitEventSet, connectionReady,
+									raiseInterrupts);
+		}
+		PG_CATCH();
+		{
+			/* make sure the epoll file descriptor is closed */
+			FreeWaitEventSet(waitEventSet);
+			PG_RE_THROW();
+		}
+		PG_END_TRY();
+	}
+
+	FreeWaitEventSet(waitEventSet);
+
+	/* move connections that are not yet ready to the end of the array */
+	for (connectionIndex = waiter->currentOffset; connectionIndex < connectionCount;
+		 connectionIndex++)
+	{
+		if (connectionReady[connectionIndex])
+		{
+			MultiConnection *connection = allConnections[connectionIndex];
+
+			/* connection is ready, add to ready list */
+			readyConnectionList = lappend(readyConnectionList, connection);
+
+			/* reuse the slot; move a non-ready connection from the front */
+			allConnections[connectionIndex] = allConnections[waiter->currentOffset];
+
+			waiter->currentOffset++;
+		}
+	}
+
+	return readyConnectionList;
+}
+
+
+/*
+ * WaitForReadyConnections waits for connections using the given WaitEventSet.
+ */
+static void
+WaitForReadyConnections(MultiConnectionWaiter *waiter, WaitEventSet *waitEventSet,
+						bool *connectionReady, bool raiseInterrupts)
+{
+	int connectionCount = waiter->connectionCount;
+	int pendingConnectionsStartIndex = waiter->currentOffset;
+	int pendingConnectionCount = connectionCount - pendingConnectionsStartIndex;
+	bool foundReadyConnections = false;
+	bool cancelled = false;
+	int connectionIndex = 0;
+
+	while (!foundReadyConnections)
+	{
+		int eventIndex = 0;
+		int eventCount = 0;
+		long timeout = -1;
+
+		/* wait for I/O events */
+#if (PG_VERSION_NUM >= 100000)
+		eventCount = WaitEventSetWait(waitEventSet, timeout, waiter->events,
+									  pendingConnectionCount, WAIT_EVENT_CLIENT_READ);
+#else
+		eventCount = WaitEventSetWait(waitEventSet, timeout, waiter->events,
+									  pendingConnectionCount);
+#endif
+
+		for (; eventIndex < eventCount; eventIndex++)
+		{
+			WaitEvent *event = &waiter->events[eventIndex];
+			MultiConnection *connection = NULL;
+			bool connectionIsReady = false;
+
+			if (event->events & WL_POSTMASTER_DEATH)
+			{
+				ereport(ERROR, (errmsg("postmaster was shut down, exiting")));
+			}
+
+			if (event->events & WL_LATCH_SET)
+			{
+				ResetLatch(MyLatch);
+
+				if (raiseInterrupts)
+				{
+					CHECK_FOR_INTERRUPTS();
+				}
+
+				if (InterruptHoldoffCount > 0 && (QueryCancelPending || ProcDiePending))
+				{
+					cancelled = true;
+					break;
+				}
+
+				continue;
+			}
+
+			connection = (MultiConnection *) event->user_data;
+			connectionIndex = event->pos + pendingConnectionsStartIndex;
+
+			if (event->events & WL_SOCKET_READABLE)
+			{
+				int receiveStatus = PQconsumeInput(connection->pgConn);
+				if (receiveStatus == 0)
+				{
+					/* receive failed, done with this connection */
+					connectionIsReady = true;
+				}
+				else if (!PQisBusy(connection->pgConn))
+				{
+					/* result was received */
+					connectionIsReady = true;
+				}
+			}
+			if (event->events & WL_SOCKET_WRITEABLE)
+			{
+				int sendStatus = PQflush(connection->pgConn);
+				if (sendStatus == -1)
+				{
+					/* send failed, done with this connection */
+					connectionIsReady = true;
+				}
+				else if (sendStatus == 0)
+				{
+					/* done writing, only wait for read events */
+					ModifyWaitEvent(waitEventSet, connectionIndex, WL_SOCKET_READABLE,
+									NULL);
+				}
+			}
+
+			if (connectionIsReady)
+			{
+				/* reuse this slot for a different connection */
+				connectionReady[connectionIndex] = true;
+				foundReadyConnections = true;
+			}
+		}
+	}
+
+	/* return all remaining connections if we need to cancel */
+	if (cancelled)
+	{
+		for (connectionIndex = waiter->currentOffset;
+			 connectionIndex < connectionCount; connectionIndex++)
+		{
+			connectionReady[connectionIndex] = true;
+		}
+	}
+}
+
+
+/*
+ * FreeMultiConnectionWaiter frees a previously allocated MultiConnectionWaiter.
+ */
+static void
+FreeMultiConnectionWaiter(MultiConnectionWaiter *waiter)
+{
+	Assert(waiter->connections != NULL);
+	Assert(waiter->events != NULL);
+
+	pfree(waiter->connections);
+	pfree(waiter->events);
+	pfree(waiter);
 }
