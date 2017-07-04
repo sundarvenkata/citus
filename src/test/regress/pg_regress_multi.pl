@@ -236,6 +236,12 @@ push(@pgOptions, '-c', "citus.remote_task_check_interval=1ms");
 push(@pgOptions, '-c', "citus.shard_replication_factor=2");
 push(@pgOptions, '-c', "citus.node_connection_timeout=${connectionTimeout}");
 
+# Specific options for isolation tests
+if ($isolationtester)
+{
+	push(@pgOptions, '-c', "citus.shard_count=4");
+}
+
 # Add externally added options last, so they overwrite the default ones above
 for my $option (@userPgOptions)
 {
