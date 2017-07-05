@@ -73,6 +73,17 @@ count
 
 6              
 
+starting permutation: s1-begin s1-insert s2-ddl-create-index-concurrently s1-commit s1-select-count
+step s1-begin: BEGIN;
+step s1-insert: INSERT INTO insert_hash VALUES(7, 'k');
+step s2-ddl-create-index-concurrently: CREATE INDEX CONCURRENTLY insert_hash_index ON insert_hash(id); <waiting ...>
+step s1-commit: COMMIT;
+step s2-ddl-create-index-concurrently: <... completed>
+step s1-select-count: SELECT COUNT(*) FROM insert_hash;
+count          
+
+6              
+
 starting permutation: s1-begin s1-insert s2-ddl-add-column s1-commit s1-select-count
 step s1-begin: BEGIN;
 step s1-insert: INSERT INTO insert_hash VALUES(7, 'k');

@@ -18,7 +18,6 @@ session "s1"
 step "s1-begin" { BEGIN; }
 step "s1-insert" { INSERT INTO insert_hash VALUES(7, 'k'); }
 step "s1-update" { UPDATE insert_hash SET data = 'l' WHERE id = 4; }
-step "s1-upsert" { INSERT INTO insert_hash VALUES(4, 'm') ON CONFLICT ON CONSTRAINT insert_hash_unique DO UPDATE SET data = 'l'; }
 step "s1-delete" { DELETE FROM insert_hash WHERE id = 4; }
 step "s1-truncate" { TRUNCATE insert_hash; }
 step "s1-drop" { DROP TABLE insert_hash; }
@@ -38,12 +37,12 @@ step "s1-commit" { COMMIT; }
 session "s2"
 step "s2-insert" { INSERT INTO insert_hash VALUES(7, 'k'); }
 step "s2-update" { UPDATE insert_hash SET data = 'l' WHERE id = 4; }
-step "s2-upsert" { INSERT INTO insert_hash VALUES(4, 'm') ON CONFLICT ON CONSTRAINT insert_hash_unique DO UPDATE SET data = 'l'; }
 step "s2-delete" { DELETE FROM insert_hash WHERE id = 4; }
 step "s2-truncate" { TRUNCATE insert_hash; }
 step "s2-drop" { DROP TABLE insert_hash; }
 step "s2-ddl-create-index" { CREATE INDEX insert_hash_index ON insert_hash(id); }
 step "s2-ddl-drop-index" { DROP INDEX insert_hash_index; }
+step "s2-ddl-create-index-concurrently" { CREATE INDEX CONCURRENTLY insert_hash_index ON insert_hash(id); }
 step "s2-ddl-add-column" { ALTER TABLE insert_hash ADD new_column int DEFAULT 0; }
 step "s2-ddl-drop-column" { ALTER TABLE insert_hash DROP new_column; }
 step "s2-ddl-rename-column" { ALTER TABLE insert_hash RENAME data TO new_data; }
@@ -63,6 +62,7 @@ permutation "s1-begin" "s1-insert" "s2-truncate" "s1-commit" "s1-select-count"
 permutation "s1-begin" "s1-insert" "s2-drop" "s1-commit" "s1-select-count"
 permutation "s1-begin" "s1-insert" "s2-ddl-create-index" "s1-commit" "s1-select-count"
 permutation "s1-ddl-create-index" "s1-begin" "s1-insert" "s2-ddl-drop-index" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-insert" "s2-ddl-create-index-concurrently" "s1-commit" "s1-select-count"
 permutation "s1-begin" "s1-insert" "s2-ddl-add-column" "s1-commit" "s1-select-count"
 permutation "s1-ddl-add-column" "s1-begin" "s1-insert" "s2-ddl-drop-column" "s1-commit" "s1-select-count"
 permutation "s1-begin" "s1-insert" "s2-table-size" "s1-commit" "s1-select-count"

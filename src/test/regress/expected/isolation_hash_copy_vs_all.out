@@ -10,10 +10,23 @@ count
 
 15             
 
-starting permutation: s1-begin s1-copy s2-select s1-commit s1-select-count
+starting permutation: s1-begin s1-copy s2-router-select s1-commit s1-select-count
 step s1-begin: BEGIN;
 step s1-copy: COPY hash_copy FROM PROGRAM 'echo 5, f\\n6, g\\n7, h\\n8, i\\n9, j' WITH CSV;
-step s2-select: SELECT * FROM hash_copy ORDER BY id, data;
+step s2-router-select: SELECT * FROM hash_copy WHERE id = 1;
+id             data           
+
+1               b             
+step s1-commit: COMMIT;
+step s1-select-count: SELECT COUNT(*) FROM hash_copy;
+count          
+
+10             
+
+starting permutation: s1-begin s1-copy s2-multi-shard-select s1-commit s1-select-count
+step s1-begin: BEGIN;
+step s1-copy: COPY hash_copy FROM PROGRAM 'echo 5, f\\n6, g\\n7, h\\n8, i\\n9, j' WITH CSV;
+step s2-multi-shard-select: SELECT * FROM hash_copy ORDER BY id, data;
 id             data           
 
 0               a             
@@ -100,6 +113,17 @@ count
 
 10             
 
+starting permutation: s1-begin s1-copy s2-ddl-create-index-concurrently s1-commit s1-select-count
+step s1-begin: BEGIN;
+step s1-copy: COPY hash_copy FROM PROGRAM 'echo 5, f\\n6, g\\n7, h\\n8, i\\n9, j' WITH CSV;
+step s2-ddl-create-index-concurrently: CREATE INDEX CONCURRENTLY hash_copy_index ON hash_copy(id); <waiting ...>
+step s1-commit: COMMIT;
+step s2-ddl-create-index-concurrently: <... completed>
+step s1-select-count: SELECT COUNT(*) FROM hash_copy;
+count          
+
+10             
+
 starting permutation: s1-begin s1-copy s2-ddl-add-column s1-commit s1-select-count
 step s1-begin: BEGIN;
 step s1-copy: COPY hash_copy FROM PROGRAM 'echo 5, f\\n6, g\\n7, h\\n8, i\\n9, j' WITH CSV;
@@ -172,9 +196,22 @@ count
 
 10             
 
-starting permutation: s1-begin s1-select s2-copy s1-commit s1-select-count
+starting permutation: s1-begin s1-router-select s2-copy s1-commit s1-select-count
 step s1-begin: BEGIN;
-step s1-select: SELECT * FROM hash_copy ORDER BY id, data;
+step s1-router-select: SELECT * FROM hash_copy WHERE id = 1;
+id             data           
+
+1               b             
+step s2-copy: COPY hash_copy FROM PROGRAM 'echo 5, f\\n6, g\\n7, h\\n8, i\\n9, j' WITH CSV;
+step s1-commit: COMMIT;
+step s1-select-count: SELECT COUNT(*) FROM hash_copy;
+count          
+
+10             
+
+starting permutation: s1-begin s1-multi-shard-select s2-copy s1-commit s1-select-count
+step s1-begin: BEGIN;
+step s1-multi-shard-select: SELECT * FROM hash_copy ORDER BY id, data;
 id             data           
 
 0               a             

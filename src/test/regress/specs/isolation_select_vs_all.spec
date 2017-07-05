@@ -16,11 +16,11 @@ teardown
 # session 1
 session "s1"
 step "s1-begin" { BEGIN; }
-step "s1-select" { SELECT * FROM select_hash ORDER BY id, data; }
+step "s1-router-select" { SELECT * FROM select_hash WHERE id = 1; }
+step "s1-multi-shard-select" { SELECT * FROM select_hash ORDER BY id, data; }
 step "s1-select-count" { SELECT COUNT(*) FROM select_hash; }
 step "s1-insert" { INSERT INTO select_hash VALUES(0, 'k'); }
 step "s1-update" { UPDATE select_hash SET data = 'l' WHERE id = 0; }
-step "s1-upsert" { INSERT INTO select_hash VALUES(0, 'm') ON CONFLICT ON CONSTRAINT select_hash_unique DO UPDATE SET data = 'l'; }
 step "s1-delete" { DELETE FROM select_hash WHERE id = 1; }
 step "s1-truncate" { TRUNCATE select_hash; }
 step "s1-drop" { DROP TABLE select_hash; }
@@ -37,15 +37,16 @@ step "s1-commit" { COMMIT; }
 
 # session 2
 session "s2"
-step "s2-select" { SELECT * FROM select_hash ORDER BY id, data; }
+step "s2-router-select" { SELECT * FROM select_hash WHERE id = 1; }
+step "s2-multi-shard-select" { SELECT * FROM select_hash ORDER BY id, data; }
 step "s2-insert" { INSERT INTO select_hash VALUES(0, 'k'); }
 step "s2-update" { UPDATE select_hash SET data = 'l' WHERE id = 0; }
-step "s2-upsert" { INSERT INTO select_hash VALUES(0, 'm') ON CONFLICT ON CONSTRAINT select_hash_unique DO UPDATE SET data = 'l'; }
 step "s2-delete" { DELETE FROM select_hash WHERE id = 1; }
 step "s2-truncate" { TRUNCATE select_hash; }
 step "s2-drop" { DROP TABLE select_hash; }
 step "s2-ddl-create-index" { CREATE INDEX select_hash_index ON select_hash(id); }
 step "s2-ddl-drop-index" { DROP INDEX select_hash_index; }
+step "s2-ddl-create-index-concurrently" { CREATE INDEX CONCURRENTLY select_hash_index ON select_hash(id); }
 step "s2-ddl-add-column" { ALTER TABLE select_hash ADD new_column int DEFAULT 0; }
 step "s2-ddl-drop-column" { ALTER TABLE select_hash DROP new_column; }
 step "s2-ddl-rename-column" { ALTER TABLE select_hash RENAME data TO new_data; }
@@ -55,34 +56,67 @@ step "s2-create-non-distributed-table" { CREATE TABLE select_hash(id integer, da
 step "s2-distribute-table" { SELECT create_distributed_table('select_hash', 'id'); }
 
 # permutations - SELECT vs SELECT
-permutation "s1-begin" "s1-select" "s2-select" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-router-select" "s2-router-select" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-router-select" "s2-multi-shard-select" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-multi-shard-select" "s2-router-select" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-multi-shard-select" "s2-multi-shard-select" "s1-commit" "s1-select-count"
 
-# permutations - SELECT first
-permutation "s1-begin" "s1-select" "s2-insert" "s1-commit" "s1-select-count"
-permutation "s1-begin" "s1-select" "s2-update" "s1-commit" "s1-select-count"
-permutation "s1-begin" "s1-select" "s2-delete" "s1-commit" "s1-select-count"
-permutation "s1-begin" "s1-select" "s2-truncate" "s1-commit" "s1-select-count"
-permutation "s1-begin" "s1-select" "s2-drop" "s1-commit" "s1-select-count"
-permutation "s1-begin" "s1-select" "s2-ddl-create-index" "s1-commit" "s1-select-count"
-permutation "s1-ddl-create-index" "s1-begin" "s1-select" "s2-ddl-drop-index" "s1-commit" "s1-select-count"
-permutation "s1-begin" "s1-select" "s2-ddl-add-column" "s1-commit" "s1-select-count"
-permutation "s1-ddl-add-column" "s1-begin" "s1-select" "s2-ddl-drop-column" "s1-commit" "s1-select-count"
-permutation "s1-begin" "s1-select" "s2-table-size" "s1-commit" "s1-select-count"
-permutation "s1-begin" "s1-select" "s2-master-modify-multiple-shards" "s1-commit" "s1-select-count"
-permutation "s1-drop" "s1-create-non-distributed-table" "s1-begin" "s1-select" "s2-distribute-table" "s1-commit" "s1-select-count"
+# permutations - router SELECT first
+permutation "s1-begin" "s1-router-select" "s2-insert" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-router-select" "s2-update" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-router-select" "s2-delete" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-router-select" "s2-truncate" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-router-select" "s2-drop" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-router-select" "s2-ddl-create-index" "s1-commit" "s1-select-count"
+permutation "s1-ddl-create-index" "s1-begin" "s1-router-select" "s2-ddl-drop-index" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-router-select" "s2-ddl-create-index-concurrently" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-router-select" "s2-ddl-add-column" "s1-commit" "s1-select-count"
+permutation "s1-ddl-add-column" "s1-begin" "s1-router-select" "s2-ddl-drop-column" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-router-select" "s2-table-size" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-router-select" "s2-master-modify-multiple-shards" "s1-commit" "s1-select-count"
+permutation "s1-drop" "s1-create-non-distributed-table" "s1-begin" "s1-router-select" "s2-distribute-table" "s1-commit" "s1-select-count"
 
-# permutations - SELECT second
-permutation "s1-begin" "s1-insert" "s2-select" "s1-commit" "s1-select-count"
-permutation "s1-begin" "s1-update" "s2-select" "s1-commit" "s1-select-count"
-permutation "s1-begin" "s1-delete" "s2-select" "s1-commit" "s1-select-count"
-permutation "s1-begin" "s1-truncate" "s2-select" "s1-commit" "s1-select-count"
-permutation "s1-begin" "s1-drop" "s2-select" "s1-commit" "s1-select-count"
-permutation "s1-begin" "s1-ddl-create-index" "s2-select" "s1-commit" "s1-select-count"
-permutation "s1-ddl-create-index" "s1-begin" "s1-ddl-drop-index" "s2-select" "s1-commit" "s1-select-count"
-permutation "s1-begin" "s1-ddl-add-column" "s2-select" "s1-commit" "s1-select-count"
-permutation "s1-ddl-add-column" "s1-begin" "s1-ddl-drop-column" "s2-select" "s1-commit" "s1-select-count"
-permutation "s1-begin" "s1-table-size" "s2-select" "s1-commit" "s1-select-count"
-permutation "s1-begin" "s1-master-modify-multiple-shards" "s2-select" "s1-commit" "s1-select-count"
-permutation "s1-drop" "s1-create-non-distributed-table" "s1-begin" "s1-distribute-table" "s2-select" "s1-commit" "s1-select-count"
+# permutations - router SELECT second
+permutation "s1-begin" "s1-insert" "s2-router-select" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-update" "s2-router-select" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-delete" "s2-router-select" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-truncate" "s2-router-select" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-drop" "s2-router-select" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-ddl-create-index" "s2-router-select" "s1-commit" "s1-select-count"
+permutation "s1-ddl-create-index" "s1-begin" "s1-ddl-drop-index" "s2-router-select" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-ddl-add-column" "s2-router-select" "s1-commit" "s1-select-count"
+permutation "s1-ddl-add-column" "s1-begin" "s1-ddl-drop-column" "s2-router-select" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-table-size" "s2-router-select" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-master-modify-multiple-shards" "s2-router-select" "s1-commit" "s1-select-count"
+permutation "s1-drop" "s1-create-non-distributed-table" "s1-begin" "s1-distribute-table" "s2-router-select" "s1-commit" "s1-select-count"
+
+# permutations - multi shard SELECT first
+permutation "s1-begin" "s1-multi-shard-select" "s2-insert" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-multi-shard-select" "s2-update" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-multi-shard-select" "s2-delete" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-multi-shard-select" "s2-truncate" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-multi-shard-select" "s2-drop" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-multi-shard-select" "s2-ddl-create-index" "s1-commit" "s1-select-count"
+permutation "s1-ddl-create-index" "s1-begin" "s1-multi-shard-select" "s2-ddl-drop-index" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-multi-shard-select" "s2-ddl-create-index-concurrently" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-multi-shard-select" "s2-ddl-add-column" "s1-commit" "s1-select-count"
+permutation "s1-ddl-add-column" "s1-begin" "s1-multi-shard-select" "s2-ddl-drop-column" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-multi-shard-select" "s2-table-size" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-multi-shard-select" "s2-master-modify-multiple-shards" "s1-commit" "s1-select-count"
+permutation "s1-drop" "s1-create-non-distributed-table" "s1-begin" "s1-multi-shard-select" "s2-distribute-table" "s1-commit" "s1-select-count"
+
+# permutations - multi shard SELECT second
+permutation "s1-begin" "s1-insert" "s2-multi-shard-select" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-update" "s2-multi-shard-select" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-delete" "s2-multi-shard-select" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-truncate" "s2-multi-shard-select" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-drop" "s2-multi-shard-select" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-ddl-create-index" "s2-multi-shard-select" "s1-commit" "s1-select-count"
+permutation "s1-ddl-create-index" "s1-begin" "s1-ddl-drop-index" "s2-multi-shard-select" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-ddl-add-column" "s2-multi-shard-select" "s1-commit" "s1-select-count"
+permutation "s1-ddl-add-column" "s1-begin" "s1-ddl-drop-column" "s2-multi-shard-select" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-table-size" "s2-multi-shard-select" "s1-commit" "s1-select-count"
+permutation "s1-begin" "s1-master-modify-multiple-shards" "s2-multi-shard-select" "s1-commit" "s1-select-count"
+permutation "s1-drop" "s1-create-non-distributed-table" "s1-begin" "s1-distribute-table" "s2-multi-shard-select" "s1-commit" "s1-select-count"
 
 
