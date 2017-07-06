@@ -126,6 +126,7 @@ static Job * BuildJobTreeTaskList(Job *jobTree,
 								  PlannerRestrictionContext *plannerRestrictionContext);
 static List * SubquerySqlTaskList(Job *job,
 								  PlannerRestrictionContext *plannerRestrictionContext);
+static void ErrorIfUnsupportedJoinReferenceTable(PlannerRestrictionContext *plannerRestrictionContext);
 static void ErrorIfUnsupportedShardDistribution(Query *query);
 static bool CoPartitionedTables(Oid firstRelationId, Oid secondRelationId);
 static bool ShardIntervalsEqual(FmgrInfo *comparisonFunction,
@@ -2038,6 +2039,9 @@ SubquerySqlTaskList(Job *job, PlannerRestrictionContext *plannerRestrictionConte
 	/* error if shards are not co-partitioned */
 	ErrorIfUnsupportedShardDistribution(subquery);
 
+	/* error if unsupported join on reference tables*/
+	ErrorIfUnsupportedJoinReferenceTable(plannerRestrictionContext);
+
 	/* get list of all range tables in subquery tree */
 	ExtractRangeTableRelationWalker((Node *) subquery, &rangeTableList);
 
@@ -2089,6 +2093,50 @@ SubquerySqlTaskList(Job *job, PlannerRestrictionContext *plannerRestrictionConte
 
 
 /*
+ * ErrorIfUnsupportedJoinReferenceTable errors out if there exists a non-inner join join
+ * exist between reference table and distributed tables.
+ */
+static void
+ErrorIfUnsupportedJoinReferenceTable(PlannerRestrictionContext *plannerRestrictionContext)
+{
+	List *joinRestrictionList = plannerRestrictionContext->joinRestrictionContext->joinRestrictionList;
+	ListCell *joinRestrictionCell = NULL;
+
+	foreach(joinRestrictionCell, joinRestrictionList)
+	{
+		JoinRestriction *joinRestriction = (JoinRestriction *)lfirst(joinRestrictionCell);
+		JoinType joinType = joinRestriction->joinType;
+		PlannerInfo *plannerInfo = joinRestriction->plannerInfo;
+		Query *parseQuery = plannerInfo->parse;
+		List *rangeTableList = NIL;
+		ExtractRangeTableRelationWalker((Node *) parseQuery, &rangeTableList);
+		ListCell *rangeTableCell = NULL;
+		ereport(WARNING, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+											errmsg("Hooraaa")));
+
+		if (joinType != JOIN_INNER)
+		{
+			foreach(rangeTableCell, rangeTableList)
+			{
+				RangeTblEntry *rangeTableEntry = (RangeTblEntry *) lfirst(rangeTableCell);
+				Oid relationId = rangeTableEntry->relid;
+				char partitionMethod = PartitionMethod(relationId);
+
+				ereport(WARNING, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+													errmsg("Outer relation id is : %u", relationId)));
+
+				if (partitionMethod == DISTRIBUTE_BY_NONE)
+				{
+					ereport(WARNING, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+									errmsg("In reference table check : %d , %u", joinType, relationId)));
+				}
+			}
+		}
+	}
+}
+
+
+/*
  * ErrorIfUnsupportedShardDistribution gets list of relations in the given query
  * and checks if two conditions below hold for them, otherwise it errors out.
  * a. Every relation is distributed by range or hash. This means shards are
@@ -2121,10 +2169,8 @@ ErrorIfUnsupportedShardDistribution(Query *query)
 		}
 		else
 		{
-			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							errmsg("cannot push down this subquery"),
-							errdetail("Currently range and hash partitioned "
-									  "relations are supported")));
+			/* do not need to handle reference tables */
+			continue;
 		}
 	}
 
@@ -2141,6 +2187,13 @@ ErrorIfUnsupportedShardDistribution(Query *query)
 		Oid relationId = lfirst_oid(relationIdCell);
 		bool coPartitionedTables = false;
 		Oid currentRelationId = relationId;
+		char partitionMethod = PartitionMethod(relationId);
+
+		/* do not need to check reference tables */
+		if (partitionMethod == DISTRIBUTE_BY_NONE)
+		{
+			continue;
+		}
 
 		/* get shard list of first relation and continue for the next relation */
 		if (relationIndex == 0)
@@ -2269,7 +2322,7 @@ ShardIntervalsEqual(FmgrInfo *comparisonFunction, ShardInterval *firstInterval,
 
 /*
  * SubqueryTaskCreate creates a sql task by replacing the target
- * shardInterval's boundary value.. Then performs the normal
+ * shardInterval's boundary value. Then performs the normal
  * shard pruning on the subquery via RouterSelectQuery().
  *
  * The function errors out if the subquery is not router select query (i.e.,
@@ -2333,6 +2386,7 @@ SubqueryTaskCreate(Query *originalQuery, ShardInterval *shardInterval,
 	routerPlannable = RouterSelectQuery(taskQuery, copiedRestrictionContext,
 										&selectPlacementList, &selectAnchorShardId,
 										&relationShardList, replacePrunedQueryWithDummy);
+	ereport(DEBUG2, (errmsg("Anchor shard id is : %lu ", selectAnchorShardId)));
 
 	/* we don't expect to this this error but keeping it as a precaution for future changes */
 	if (!routerPlannable)

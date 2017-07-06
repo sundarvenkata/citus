@@ -3033,6 +3033,41 @@ if test x"$citusac_cv_prog_cc_cflags__Wmissing_prototypes" = x"yes"; then
   CITUS_CFLAGS="$CITUS_CFLAGS -Wmissing-prototypes"
 fi
 
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking whether $CC supports -gdwarf-2" >&5
+$as_echo_n "checking whether $CC supports -gdwarf-2... " >&6; }
+if ${citusac_cv_prog_cc_cflags__gdwarf_2+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  citusac_save_CFLAGS=$CFLAGS
+CFLAGS="$citusac_save_CFLAGS -gdwarf-2"
+ac_save_c_werror_flag=$ac_c_werror_flag
+ac_c_werror_flag=yes
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+int
+main ()
+{
+
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_compile "$LINENO"; then :
+  citusac_cv_prog_cc_cflags__gdwarf_2=yes
+else
+  citusac_cv_prog_cc_cflags__gdwarf_2=no
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
+ac_c_werror_flag=$ac_save_c_werror_flag
+CFLAGS="$citusac_save_CFLAGS"
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $citusac_cv_prog_cc_cflags__gdwarf_2" >&5
+$as_echo "$citusac_cv_prog_cc_cflags__gdwarf_2" >&6; }
+if test x"$citusac_cv_prog_cc_cflags__gdwarf_2" = x"yes"; then
+  CITUS_CFLAGS="$CITUS_CFLAGS -gdwarf-2"
+fi
+
 
 #
 # --enable-coverage enables generation of code coverage metrics with gcov

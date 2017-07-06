@@ -52,6 +52,7 @@ typedef struct JoinRestriction
 	JoinType joinType;
 	List *joinRestrictInfoList;
 	PlannerInfo *plannerInfo;
+	RelOptInfo *outerrel;
 } JoinRestriction;
 
 typedef struct PlannerRestrictionContext
