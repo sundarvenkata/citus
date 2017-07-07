@@ -709,9 +709,8 @@ multi_join_restriction_hook(PlannerInfo *root,
 	joinRestriction->joinRestrictInfoList = restrictInfoList;
 	joinRestriction->plannerInfo = root;
 	joinRestriction->outerrel = outerrel;
-
-	ereport(WARNING, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					errmsg("Join type is : %u", jointype)));
+	joinRestriction->innerrel = innerrel;
+	joinRestriction-> joinrel = joinrel;
 
 	joinRestrictionContext->joinRestrictionList =
 		lappend(joinRestrictionContext->joinRestrictionList, joinRestriction);

@@ -463,7 +463,14 @@ RouterModifyTaskForShardInterval(Query *originalQuery, ShardInterval *shardInter
 			continue;
 		}
 
+		/* means it is a reference table and do not add any shard interval info */
 		shardOpExpressions = ShardIntervalOpExpressions(shardInterval, rteIndex);
+
+		if (shardOpExpressions == NIL)
+		{
+			continue;
+		}
+
 		shardRestrictionList = make_simple_restrictinfo((Expr *) shardOpExpressions);
 		extendedBaseRestrictInfo = lappend(extendedBaseRestrictInfo,
 										   shardRestrictionList);

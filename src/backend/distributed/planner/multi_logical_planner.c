@@ -995,8 +995,23 @@ TargetListOnPartitionColumn(Query *query, List *targetEntryList)
 	{
 		TargetEntry *targetEntry = (TargetEntry *) lfirst(targetEntryCell);
 		Expr *targetExpression = targetEntry->expr;
-
 		bool isPartitionColumn = IsPartitionColumn(targetExpression, query);
+
+		Oid relationId = InvalidOid;
+		Var *column = NULL;
+		FindReferencedTableColumn(targetExpression, NIL, query, &relationId, &column);
+
+		/*
+		 * If the expression belongs to reference table directly returns true,
+		 * since logic of caller function checks whether it can find the necessaary
+		 * data from each node.
+		 */
+		if (IsDistributedTable(relationId) && PartitionMethod(relationId) == DISTRIBUTE_BY_NONE)
+		{
+			targetListOnPartitionColumn = true;
+			break;
+		}
+
 		if (isPartitionColumn)
 		{
 			FieldSelect *compositeField = CompositeFieldRecursive(targetExpression,
@@ -3141,10 +3156,10 @@ SubqueryPushdownMultiPlanTree(Query *queryTree)
 	 */
 
 	/*
-	 * uniqueColumnList contains all columns returned by subquery. Subquery target
+	 * columnList contains all columns returned by subquery. Subquery target
 	 * entry list, subquery range table entry's column name list are derived from
-	 * uniqueColumnList. Columns mentioned in multiProject node and multiExtendedOp
-	 * node are indexed with their respective position in uniqueColumnList.
+	 * columnList. Columns mentioned in multiProject node and multiExtendedOp
+	 * node are indexed with their respective position in columnList.
 	 */
 	targetColumnList = pull_var_clause_default((Node *) targetEntryList);
 	havingClauseColumnList = pull_var_clause_default(queryTree->havingQual);
