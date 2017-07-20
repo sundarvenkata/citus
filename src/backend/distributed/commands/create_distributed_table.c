@@ -626,6 +626,11 @@ CreateHashDistributedTable(Oid relationId, char *distributionColumnName,
 	 * Get an exclusive lock on the colocation system catalog. Therefore, we
 	 * can be sure that there will no modifications on the colocation table
 	 * until this transaction is committed.
+	 *
+	 * Note that we may change the lock type to AccessShareLock if we don't
+	 * create a new colocation group. So, concurrent create_distributed_table
+	 * operations don't have to wait for each other if colocation group exists
+	 * for given shard count and distribution column type.
 	 */
 	pgDistColocation = heap_open(DistColocationRelationId(), ExclusiveLock);
 
@@ -644,6 +649,9 @@ CreateHashDistributedTable(Oid relationId, char *distributionColumnName,
 		}
 		else
 		{
+			/* to allow concurrent run with another create_distributed_table */
+			heap_close(pgDistColocation, ExclusiveLock);
+			heap_open(DistColocationRelationId(), AccessShareLock);
 			sourceRelationId = ColocatedTableId(colocationId);
 		}
 	}
