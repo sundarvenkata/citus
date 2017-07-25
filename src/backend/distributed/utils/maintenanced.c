@@ -22,8 +22,10 @@
 
 #include "access/xact.h"
 #include "libpq/pqsignal.h"
+#include "distributed/deadlock_detection.h"
 #include "distributed/maintenanced.h"
 #include "distributed/metadata_cache.h"
+#include "distributed/multi_router_executor.h"
 #include "postmaster/bgworker.h"
 #include "storage/ipc.h"
 #include "storage/proc.h"
@@ -248,7 +250,7 @@ CitusMaintenanceDaemonMain(Datum main_arg)
 	{
 		int rc;
 		int latchFlags = WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH;
-		int timeout = 10000; /* wake up at least every so often */
+		int timeout = 1000; /* wake up at least every so often */
 
 		CHECK_FOR_INTERRUPTS();
 
@@ -257,6 +259,24 @@ CitusMaintenanceDaemonMain(Datum main_arg)
 		 * timeout indicates, it's ok to lower it to that value.  Expensive
 		 * tasks should do their own time math about whether to re-run checks.
 		 */
+
+		/* perform distributed deadlock detection unless deadlocks are prevented */
+		if (!EnableDeadlockPrevention)
+		{
+			bool foundDeadlock = false;
+
+			/* TODO: reset memory context */
+
+			StartTransactionCommand();
+			foundDeadlock = DetectDistributedDeadlocks();
+			CommitTransactionCommand();
+
+			if (foundDeadlock)
+			{
+				/* check again faster in case there are more deadlocks */
+				timeout = 100;
+			}
+		}
 
 		/*
 		 * Wait until timeout, or until somebody wakes us up.
