@@ -25,6 +25,7 @@
 #include "storage/ipc.h"
 #include "storage/lwlock.h"
 #include "storage/proc.h"
+#include "storage/procarray.h"
 #include "storage/spin.h"
 #include "storage/s_lock.h"
 #include "utils/timestamp.h"
@@ -105,6 +106,7 @@ assign_distributed_transaction_id(PG_FUNCTION_ARGS)
 	MyBackendData->transactionId.initiatorNodeIdentifier = PG_GETARG_INT32(0);
 	MyBackendData->transactionId.transactionNumber = PG_GETARG_INT64(1);
 	MyBackendData->transactionId.timestamp = PG_GETARG_TIMESTAMPTZ(2);
+	MyBackendData->killedDueToDeadlock = false;
 
 	SpinLockRelease(&MyBackendData->mutex);
 
@@ -406,6 +408,7 @@ InitializeBackendData(void)
 	MyBackendData->transactionId.initiatorNodeIdentifier = 0;
 	MyBackendData->transactionId.transactionNumber = 0;
 	MyBackendData->transactionId.timestamp = 0;
+	MyBackendData->killedDueToDeadlock = false;
 
 	SpinLockRelease(&MyBackendData->mutex);
 }
@@ -427,6 +430,7 @@ UnSetDistributedTransactionId(void)
 		MyBackendData->transactionId.initiatorNodeIdentifier = 0;
 		MyBackendData->transactionId.transactionNumber = 0;
 		MyBackendData->transactionId.timestamp = 0;
+		MyBackendData->killedDueToDeadlock = false;
 
 		SpinLockRelease(&MyBackendData->mutex);
 	}
@@ -484,6 +488,7 @@ AssignDistributedTransactionId(void)
 	MyBackendData->transactionId.transactionNumber =
 		nextTransactionNumber;
 	MyBackendData->transactionId.timestamp = currentTimestamp;
+	MyBackendData->killedDueToDeadlock = false;
 
 	SpinLockRelease(&MyBackendData->mutex);
 }
@@ -526,4 +531,45 @@ GetBackendDataForProc(PGPROC *proc, BackendData *result)
 	memcpy(result, backendData, sizeof(BackendData));
 
 	SpinLockRelease(&backendData->mutex);
+}
+
+
+/*
+ * KillTransactionDueToDeadlock sends a SIGINT to a distributed transaction
+ * due to a deadlock being detected.
+ */
+void
+KillTransactionDueToDeadlock(PGPROC *proc)
+{
+	BackendData *backendData = &backendManagementShmemData->backends[proc->pgprocno];
+
+	SpinLockAcquire(&backendData->mutex);
+
+	/* send a SIGINT only if the process is still in a distributed transaction */
+	if (backendData->transactionId.transactionNumber != 0)
+	{
+		backendData->killedDueToDeadlock = true;
+		kill(proc->pid, SIGINT);
+	}
+
+	SpinLockRelease(&backendData->mutex);
+}
+
+
+/*
+ * GotKilledDueToDeadlock returns whether the current distributed transaction
+ * was killed due to a deadlock.
+ */
+bool
+GotKilledDueToDeadlock(void)
+{
+	bool killedDueToDeadlock = false;
+
+	SpinLockAcquire(&MyBackendData->mutex);
+
+	killedDueToDeadlock = MyBackendData->killedDueToDeadlock;
+
+	SpinLockRelease(&MyBackendData->mutex);
+
+	return killedDueToDeadlock;
 }
