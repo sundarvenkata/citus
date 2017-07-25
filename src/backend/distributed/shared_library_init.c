@@ -390,7 +390,7 @@ RegisterCitusConfigVariables(void)
 					 "undetectable distributed deadlocks when performed "
 					 "concurrently."),
 		&EnableDeadlockPrevention,
-		true,
+		false,
 		PGC_USERSET,
 		GUC_NO_SHOW_ALL,
 		NULL, NULL, NULL);

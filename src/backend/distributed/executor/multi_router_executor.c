@@ -70,7 +70,7 @@
 
 /* controls use of locks to enforce safe commutativity */
 bool AllModificationsCommutative = false;
-bool EnableDeadlockPrevention = true;
+bool EnableDeadlockPrevention = false;
 
 /* functions needed during run phase */
 static void ReacquireMetadataLocks(List *taskList);
