@@ -503,11 +503,17 @@ BuildWaitGraphForSourceNode(int sourceNodeId)
 /*
  * LockLockData takes locks the shared lock data structure, which prevents
  * concurrent lock acquisitions/releases.
+ *
+ * The function also acquires lock on the backend shared memory to prevent
+ * new distributed transactions to start or existing distributed transactions
+ * to finish.
  */
 static void
 LockLockData(void)
 {
 	int partitionNum = 0;
+
+	LockBackendSharedMemory(LW_SHARED);
 
 	for (partitionNum = 0; partitionNum < NUM_LOCK_PARTITIONS; partitionNum++)
 	{
@@ -520,6 +526,9 @@ LockLockData(void)
  * UnlockLockData unlocks the locks on the shared lock data structure in reverse
  * order since LWLockRelease searches the given lock from the end of the
  * held_lwlocks array.
+ *
+ * The function also releases the shared memory lock to allow new distributed
+ * transactions to start or existing distributed transactions to finish.
  */
 static void
 UnlockLockData(void)
@@ -530,6 +539,8 @@ UnlockLockData(void)
 	{
 		LWLockRelease(LockHashPartitionLockByIndex(partitionNum));
 	}
+
+	UnlockBackendSharedMemory();
 }
 
 

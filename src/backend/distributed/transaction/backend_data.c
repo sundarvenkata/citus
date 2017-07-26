@@ -89,6 +89,12 @@ assign_distributed_transaction_id(PG_FUNCTION_ARGS)
 		ereport(ERROR, (errmsg("backend is not ready for distributed transactions")));
 	}
 
+	/*
+	 * Note that we don't need to lock shared memory (i.e., LockBackendSharedMemory()) here
+	 * since this function is executed after AssignDistributedTransactionId() issued on the
+	 * initiator node, which already takes the required lock to enforce the consistency.
+	 */
+
 	SpinLockAcquire(&MyBackendData->mutex);
 
 	/* if an id is already assigned, release the lock and error */
@@ -236,8 +242,8 @@ get_all_active_transactions(PG_FUNCTION_ARGS)
 	memset(values, 0, sizeof(values));
 	memset(isNulls, false, sizeof(isNulls));
 
-	/* we're reading all the backend data, take a lock to prevent concurrent additions */
-	LWLockAcquire(AddinShmemInitLock, LW_SHARED);
+	/* we're reading all distributed transactions, take a lock to prevent concurrent additions */
+	LockBackendSharedMemory(LW_SHARED);
 
 	for (backendIndex = 0; backendIndex < MaxBackends; ++backendIndex)
 	{
@@ -272,7 +278,7 @@ get_all_active_transactions(PG_FUNCTION_ARGS)
 		memset(isNulls, false, sizeof(isNulls));
 	}
 
-	LWLockRelease(AddinShmemInitLock);
+	UnlockBackendSharedMemory();
 
 	/* clean up and return the tuplestore */
 	tuplestore_donestoring(tupleStore);
@@ -421,6 +427,9 @@ UnSetDistributedTransactionId(void)
 	/* backend does not exist if the extension is not created */
 	if (MyBackendData)
 	{
+		/* this backend is leaving the distributed transaction */
+		LockBackendSharedMemory(LW_EXCLUSIVE);
+
 		SpinLockAcquire(&MyBackendData->mutex);
 
 		MyBackendData->databaseId = 0;
@@ -429,7 +438,38 @@ UnSetDistributedTransactionId(void)
 		MyBackendData->transactionId.timestamp = 0;
 
 		SpinLockRelease(&MyBackendData->mutex);
+
+		UnlockBackendSharedMemory();
 	}
+}
+
+
+/*
+ * LockBackendSharedMemory is a simple wrapper around LWLockAcquire on the
+ * shared memory lock.
+ *
+ * We use the backend shared memory lock for preventing new backends to be part
+ * of a new distributed transaction or an existing backend to leave a distributed
+ * transaction while we're reading the all backends' data.
+ *
+ * The primary goal is to provide consistent view of the current distributed
+ * transactions while doing the deadlock detection.
+ */
+void
+LockBackendSharedMemory(LWLockMode lockMode)
+{
+	LWLockAcquire(&backendManagementShmemData->lock, lockMode);
+}
+
+
+/*
+ * UnlockBackendSharedMemory is a simple wrapper around LWLockRelease on the
+ * shared memory lock.
+ */
+void
+UnlockBackendSharedMemory(void)
+{
+	LWLockRelease(&backendManagementShmemData->lock);
 }
 
 
@@ -476,6 +516,8 @@ AssignDistributedTransactionId(void)
 	int localGroupId = GetLocalGroupId();
 	TimestampTz currentTimestamp = GetCurrentTimestamp();
 
+	LockBackendSharedMemory(LW_EXCLUSIVE);
+
 	SpinLockAcquire(&MyBackendData->mutex);
 
 	MyBackendData->databaseId = MyDatabaseId;
@@ -486,6 +528,8 @@ AssignDistributedTransactionId(void)
 	MyBackendData->transactionId.timestamp = currentTimestamp;
 
 	SpinLockRelease(&MyBackendData->mutex);
+
+	UnlockBackendSharedMemory();
 }
 
 
