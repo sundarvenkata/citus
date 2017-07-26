@@ -78,19 +78,11 @@ DetectDistributedDeadlocks(void)
 
 		GetBackendDataForProc(localProcess, &backendData);
 
-		/* skip if not a distributed transaction */
-		if (backendData.transactionId.transactionNumber == 0)
+		/* skip if not a coordinator process */
+		if (!backendData.isCoordinator)
 		{
 			continue;
 		}
-
-		/* skip if from a different node (in MX) */
-		if (localNodeId != backendData.transactionId.initiatorNodeIdentifier)
-		{
-			continue;
-		}
-
-		/* TODO: skip worker processes */
 
 		/* get the distributed transaction for the local process */
 		currentNode = GetTransactionNode(distributedTransactionHash,
