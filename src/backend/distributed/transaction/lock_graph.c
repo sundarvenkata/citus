@@ -505,8 +505,7 @@ BuildWaitGraphForSourceNode(int sourceNodeId)
  * concurrent lock acquisitions/releases.
  *
  * The function also acquires lock on the backend shared memory to prevent
- * new distributed transactions to start or existing distributed transactions
- * to finish.
+ * new backends to start.
  */
 static void
 LockLockData(void)
@@ -527,8 +526,8 @@ LockLockData(void)
  * order since LWLockRelease searches the given lock from the end of the
  * held_lwlocks array.
  *
- * The function also releases the shared memory lock to allow new distributed
- * transactions to start or existing distributed transactions to finish.
+ * The function also releases the shared memory lock to allow new backends to
+ * start.
  */
 static void
 UnlockLockData(void)

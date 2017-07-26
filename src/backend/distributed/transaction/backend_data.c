@@ -242,7 +242,7 @@ get_all_active_transactions(PG_FUNCTION_ARGS)
 	memset(values, 0, sizeof(values));
 	memset(isNulls, false, sizeof(isNulls));
 
-	/* we're reading all distributed transactions, take a lock to prevent concurrent additions */
+	/* we're reading all distributed transactions, prevent new backends */
 	LockBackendSharedMemory(LW_EXCLUSIVE);
 
 	for (backendIndex = 0; backendIndex < MaxBackends; ++backendIndex)
@@ -406,6 +406,8 @@ InitializeBackendData(void)
 
 	Assert(MyBackendData);
 
+	LockBackendSharedMemory(LW_SHARED);
+
 	SpinLockAcquire(&MyBackendData->mutex);
 
 	MyBackendData->databaseId = MyDatabaseId;
@@ -414,6 +416,8 @@ InitializeBackendData(void)
 	MyBackendData->transactionId.timestamp = 0;
 
 	SpinLockRelease(&MyBackendData->mutex);
+
+	UnlockBackendSharedMemory();
 }
 
 
@@ -427,9 +431,6 @@ UnSetDistributedTransactionId(void)
 	/* backend does not exist if the extension is not created */
 	if (MyBackendData)
 	{
-		/* this backend is leaving the distributed transaction */
-		LockBackendSharedMemory(LW_SHARED);
-
 		SpinLockAcquire(&MyBackendData->mutex);
 
 		MyBackendData->databaseId = 0;
@@ -438,8 +439,6 @@ UnSetDistributedTransactionId(void)
 		MyBackendData->transactionId.timestamp = 0;
 
 		SpinLockRelease(&MyBackendData->mutex);
-
-		UnlockBackendSharedMemory();
 	}
 }
 
@@ -516,8 +515,6 @@ AssignDistributedTransactionId(void)
 	int localGroupId = GetLocalGroupId();
 	TimestampTz currentTimestamp = GetCurrentTimestamp();
 
-	LockBackendSharedMemory(LW_SHARED);
-
 	SpinLockAcquire(&MyBackendData->mutex);
 
 	MyBackendData->databaseId = MyDatabaseId;
@@ -528,8 +525,6 @@ AssignDistributedTransactionId(void)
 	MyBackendData->transactionId.timestamp = currentTimestamp;
 
 	SpinLockRelease(&MyBackendData->mutex);
-
-	UnlockBackendSharedMemory();
 }
 
 
