@@ -243,7 +243,7 @@ get_all_active_transactions(PG_FUNCTION_ARGS)
 	memset(isNulls, false, sizeof(isNulls));
 
 	/* we're reading all distributed transactions, take a lock to prevent concurrent additions */
-	LockBackendSharedMemory(LW_SHARED);
+	LockBackendSharedMemory(LW_EXCLUSIVE);
 
 	for (backendIndex = 0; backendIndex < MaxBackends; ++backendIndex)
 	{
@@ -428,7 +428,7 @@ UnSetDistributedTransactionId(void)
 	if (MyBackendData)
 	{
 		/* this backend is leaving the distributed transaction */
-		LockBackendSharedMemory(LW_EXCLUSIVE);
+		LockBackendSharedMemory(LW_SHARED);
 
 		SpinLockAcquire(&MyBackendData->mutex);
 
@@ -516,7 +516,7 @@ AssignDistributedTransactionId(void)
 	int localGroupId = GetLocalGroupId();
 	TimestampTz currentTimestamp = GetCurrentTimestamp();
 
-	LockBackendSharedMemory(LW_EXCLUSIVE);
+	LockBackendSharedMemory(LW_SHARED);
 
 	SpinLockAcquire(&MyBackendData->mutex);
 

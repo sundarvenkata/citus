@@ -513,7 +513,7 @@ LockLockData(void)
 {
 	int partitionNum = 0;
 
-	LockBackendSharedMemory(LW_SHARED);
+	LockBackendSharedMemory(LW_EXCLUSIVE);
 
 	for (partitionNum = 0; partitionNum < NUM_LOCK_PARTITIONS; partitionNum++)
 	{
