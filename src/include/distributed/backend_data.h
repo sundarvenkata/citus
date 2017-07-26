@@ -31,6 +31,7 @@ typedef struct BackendData
 	slock_t mutex;
 	DistributedTransactionId transactionId;
 	bool killedDueToDeadlock;
+	bool isCoordinator;
 } BackendData;
 
 

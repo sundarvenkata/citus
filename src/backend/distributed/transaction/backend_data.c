@@ -107,6 +107,7 @@ assign_distributed_transaction_id(PG_FUNCTION_ARGS)
 	MyBackendData->transactionId.transactionNumber = PG_GETARG_INT64(1);
 	MyBackendData->transactionId.timestamp = PG_GETARG_TIMESTAMPTZ(2);
 	MyBackendData->killedDueToDeadlock = false;
+	MyBackendData->isCoordinator = false;
 
 	SpinLockRelease(&MyBackendData->mutex);
 
@@ -409,6 +410,7 @@ InitializeBackendData(void)
 	MyBackendData->transactionId.transactionNumber = 0;
 	MyBackendData->transactionId.timestamp = 0;
 	MyBackendData->killedDueToDeadlock = false;
+	MyBackendData->isCoordinator = false;
 
 	SpinLockRelease(&MyBackendData->mutex);
 }
@@ -431,6 +433,7 @@ UnSetDistributedTransactionId(void)
 		MyBackendData->transactionId.transactionNumber = 0;
 		MyBackendData->transactionId.timestamp = 0;
 		MyBackendData->killedDueToDeadlock = false;
+		MyBackendData->isCoordinator = false;
 
 		SpinLockRelease(&MyBackendData->mutex);
 	}
@@ -489,6 +492,7 @@ AssignDistributedTransactionId(void)
 		nextTransactionNumber;
 	MyBackendData->transactionId.timestamp = currentTimestamp;
 	MyBackendData->killedDueToDeadlock = false;
+	MyBackendData->isCoordinator = true;
 
 	SpinLockRelease(&MyBackendData->mutex);
 }
