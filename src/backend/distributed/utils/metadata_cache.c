@@ -58,6 +58,9 @@
 #include "utils/typcache.h"
 
 
+/* user configuration */
+int ReadFromSecondaries = READ_FROM_SECONDARIES_NEVER;
+
 /*
  * ShardCacheEntry represents an entry in the shardId -> ShardInterval cache.
  * To avoid duplicating data and invalidation logic between this cache and the

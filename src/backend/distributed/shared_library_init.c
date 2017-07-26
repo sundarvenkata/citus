@@ -26,6 +26,7 @@
 #include "distributed/maintenanced.h"
 #include "distributed/master_metadata_utility.h"
 #include "distributed/master_protocol.h"
+#include "distributed/metadata_cache.h"
 #include "distributed/multi_copy.h"
 #include "distributed/multi_explain.h"
 #include "distributed/multi_join_order.h"
@@ -86,6 +87,12 @@ static const struct config_enum_entry shard_placement_policy_options[] = {
 	{ "local-node-first", SHARD_PLACEMENT_LOCAL_NODE_FIRST, false },
 	{ "round-robin", SHARD_PLACEMENT_ROUND_ROBIN, false },
 	{ "random", SHARD_PLACEMENT_RANDOM, false },
+	{ NULL, 0, false }
+};
+
+static const struct config_enum_entry read_from_secondaries_options[] = {
+	{ "never", READ_FROM_SECONDARIES_NEVER, false },
+	{ "always", READ_FROM_SECONDARIES_ALWAYS, false },
 	{ NULL, 0, false }
 };
 
@@ -646,6 +653,16 @@ RegisterCitusConfigVariables(void)
 					 "The random policy picks all workers randomly."),
 		&ShardPlacementPolicy,
 		SHARD_PLACEMENT_ROUND_ROBIN, shard_placement_policy_options,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomEnumVariable(
+		"citus.read_from_secondaries",
+		gettext_noop("Sets the policy to use when choosing nodes for SELECT queries."),
+		NULL,
+		&ReadFromSecondaries,
+		READ_FROM_SECONDARIES_NEVER, read_from_secondaries_options,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);
