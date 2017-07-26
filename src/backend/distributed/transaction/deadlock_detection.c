@@ -207,17 +207,40 @@ DistributedTransactionIdHash(const void *key, Size keysize)
 }
 
 
-
+/*
+ * DistributedTransactionIdCompare compares DistributedTransactionId's a and b
+ * and returns -1 if a < b, 1 if a > b, 0 if they are equal.
+ *
+ * DistributedTransactionId are first compared by their timestamp, then transaction
+ * number, then node identifier.
+ */
 static int
 DistributedTransactionIdCompare(const void *a, const void *b, Size keysize)
 {
 	DistributedTransactionId *xactIdA = (DistributedTransactionId *) a;
 	DistributedTransactionId *xactIdB = (DistributedTransactionId *) b;
 
-	/* NB: Not used for sorting, just equality... */
-	if (xactIdA->initiatorNodeIdentifier != xactIdB->initiatorNodeIdentifier ||
-		xactIdA->transactionNumber != xactIdB->transactionNumber ||
-		xactIdA->timestamp != xactIdB->timestamp)
+	if (xactIdA->timestamp < xactIdB->timestamp)
+	{
+		return -1;
+	}
+	else if (xactIdA->timestamp > xactIdB->timestamp)
+	{
+		return 1;
+	}
+	else if (xactIdA->transactionNumber < xactIdB->transactionNumber)
+	{
+		return -1;
+	}
+	else if (xactIdA->transactionNumber > xactIdB->transactionNumber)
+	{
+		return 1;
+	}
+	else if (xactIdA->initiatorNodeIdentifier < xactIdB->initiatorNodeIdentifier)
+	{
+		return -1;
+	}
+	else if (xactIdA->initiatorNodeIdentifier > xactIdB->initiatorNodeIdentifier)
 	{
 		return 1;
 	}
