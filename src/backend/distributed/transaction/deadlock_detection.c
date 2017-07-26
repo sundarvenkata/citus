@@ -16,11 +16,13 @@
 #include "distributed/backend_data.h"
 #include "distributed/deadlock_detection.h"
 #include "distributed/hash_helpers.h"
+#include "distributed/listutils.h"
 #include "distributed/lock_graph.h"
 #include "distributed/metadata_cache.h"
 #include "distributed/transaction_identifier.h"
 #include "nodes/pg_list.h"
 #include "utils/hsearch.h"
+#include "utils/timestamp.h"
 
 
 typedef struct TransactionNode
@@ -32,11 +34,15 @@ typedef struct TransactionNode
 
 	/* whether the node was visited in the current deadlock cycle check */
 	bool visited;
+
+	/* if transaction is coordinated by this node, the coordinating process */
+	PGPROC *localProc;
 } TransactionNode;
 
 
 static HTAB * FlattenWaitGraph(WaitGraph *waitGraph);
 static uint32 DistributedTransactionIdHash(const void *key, Size keysize);
+static int TransactionNodeSortCompare(const void *a, const void *b);
 static int DistributedTransactionIdCompare(const void *a, const void *b, Size keysize);
 static TransactionNode * GetTransactionNode(HTAB *distributedTransactionHash,
 											DistributedTransactionId *transactionId);
@@ -52,6 +58,8 @@ DetectDistributedDeadlocks(void)
 {
 	HTAB *distributedTransactionHash = NULL;
 	int currentBackend = 0;
+	List *coordinatedTransactionList = NIL;
+	ListCell *coordinatedTransactionCell = NULL;
 
 	/* go through all local processes, process the ones in a distributed transaction */
 	for (currentBackend = 0; currentBackend < MaxBackends; currentBackend++)
@@ -59,9 +67,6 @@ DetectDistributedDeadlocks(void)
 		BackendData backendData;
 		PGPROC *localProcess = NULL;
 		TransactionNode *currentNode = NULL;
-		HASH_SEQ_STATUS status;
-		TransactionNode *resetNode = NULL;
-		List *todoList = NIL;
 
 		localProcess = &ProcGlobal->allProcs[currentBackend];
 
@@ -88,6 +93,22 @@ DetectDistributedDeadlocks(void)
 		/* get the distributed transaction for the local process */
 		currentNode = GetTransactionNode(distributedTransactionHash,
 										 &backendData.transactionId);
+		currentNode->localProc = localProcess;
+
+		coordinatedTransactionList = lappend(coordinatedTransactionList, currentNode);
+	}
+
+	/* sort list by transaction ID to get predictable results and kill youngest first */
+	coordinatedTransactionList = SortList(coordinatedTransactionList,
+										  TransactionNodeSortCompare);
+
+	foreach(coordinatedTransactionCell, coordinatedTransactionList)
+	{
+		TransactionNode *currentNode =
+			(TransactionNode *) lfirst(coordinatedTransactionCell);
+		HASH_SEQ_STATUS status;
+		TransactionNode *resetNode = NULL;
+		List *todoList = NIL;
 
 		/* reset all visited fields */
 		hash_seq_init(&status, distributedTransactionHash);
@@ -114,9 +135,9 @@ DetectDistributedDeadlocks(void)
 			{
 				ereport(WARNING, (errmsg("killing the transaction running in process %d "
 										 "a to resolve a distributed deadlock",
-										 localProcess->pid)));
+										 currentNode->localProc->pid)));
 
-				KillTransactionDueToDeadlock(localProcess);
+				KillTransactionDueToDeadlock(currentNode->localProc);
 				return true;
 			}
 
@@ -208,6 +229,23 @@ DistributedTransactionIdHash(const void *key, Size keysize)
 
 
 /*
+ * TransactionNodeSortCompare compares TransactionNodeSortCompare's a and b
+ * and returns 1 if a < b, -1 if a > b, 0 if they are equal, which is the inverse
+ * of the distributed transaction ID order.
+ */
+static int
+TransactionNodeSortCompare(const void *a, const void *b)
+{
+	TransactionNode *nodeA = *((TransactionNode **) a);
+	TransactionNode *nodeB = *((TransactionNode **) b);
+
+	return 0-DistributedTransactionIdCompare(&nodeA->transactionId,
+											 &nodeB->transactionId,
+											 sizeof(DistributedTransactionId));
+}
+
+
+/*
  * DistributedTransactionIdCompare compares DistributedTransactionId's a and b
  * and returns -1 if a < b, 1 if a > b, 0 if they are equal.
  *
@@ -220,11 +258,13 @@ DistributedTransactionIdCompare(const void *a, const void *b, Size keysize)
 	DistributedTransactionId *xactIdA = (DistributedTransactionId *) a;
 	DistributedTransactionId *xactIdB = (DistributedTransactionId *) b;
 
-	if (xactIdA->timestamp < xactIdB->timestamp)
+	/* ! (B <= A) = A < B */
+	if (!TimestampDifferenceExceeds(xactIdB->timestamp, xactIdA->timestamp, 0))
 	{
 		return -1;
 	}
-	else if (xactIdA->timestamp > xactIdB->timestamp)
+	/* ! (A <= B) = A > B */
+	else if (!TimestampDifferenceExceeds(xactIdA->timestamp, xactIdB->timestamp, 0))
 	{
 		return 1;
 	}
@@ -264,6 +304,7 @@ GetTransactionNode(HTAB *distributedTransactionHash,
 	{
 		backend->waitsFor = NIL;
 		backend->visited = false;
+		backend->localProc = NULL;
 	}
 
 	return backend;
