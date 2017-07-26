@@ -53,7 +53,6 @@ DetectDistributedDeadlocks(void)
 	WaitGraph *waitGraph = NULL;
 	HTAB *distributedTransactionHash = NULL;
 	TransactionNode *currentNode = NULL;
-	int localNodeId = GetLocalGroupId();
 	int currentBackend = 0;
 
 	waitGraph = BuildGlobalWaitGraph();
