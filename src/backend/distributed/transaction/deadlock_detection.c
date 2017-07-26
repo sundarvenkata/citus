@@ -50,19 +50,15 @@ static TransactionNode * GetTransactionNode(HTAB *distributedTransactionHash,
 bool
 DetectDistributedDeadlocks(void)
 {
-	WaitGraph *waitGraph = NULL;
 	HTAB *distributedTransactionHash = NULL;
-	TransactionNode *currentNode = NULL;
 	int currentBackend = 0;
-
-	waitGraph = BuildGlobalWaitGraph();
-	distributedTransactionHash = FlattenWaitGraph(waitGraph);
 
 	/* go through all local processes, process the ones in a distributed transaction */
 	for (currentBackend = 0; currentBackend < MaxBackends; currentBackend++)
 	{
 		BackendData backendData;
 		PGPROC *localProcess = NULL;
+		TransactionNode *currentNode = NULL;
 		HASH_SEQ_STATUS status;
 		TransactionNode *resetNode = NULL;
 		List *todoList = NIL;
@@ -81,6 +77,12 @@ DetectDistributedDeadlocks(void)
 		if (!backendData.isCoordinator)
 		{
 			continue;
+		}
+
+		if (distributedTransactionHash == NULL)
+		{
+			WaitGraph *waitGraph = BuildGlobalWaitGraph();
+			distributedTransactionHash = FlattenWaitGraph(waitGraph);
 		}
 
 		/* get the distributed transaction for the local process */
