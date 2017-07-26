@@ -30,7 +30,7 @@ typedef struct TransactionNode
 	/* list of TransactionNode that this distributed transaction is waiting for */
 	List *waitsFor;
 
-	bool *deadlocked;
+	/* whether the node was visited in the current deadlock cycle check */
 	bool visited;
 } TransactionNode;
 
