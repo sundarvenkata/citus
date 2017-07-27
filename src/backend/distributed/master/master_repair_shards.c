@@ -401,8 +401,14 @@ RecreateTableDDLCommandList(Oid relationId)
 	}
 	else
 	{
+#if (PG_VERSION_NUM >= 100000)
+		ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
+						errmsg("repair target is not a regular or foreign or partitioned "
+							   "table")));
+#else
 		ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
 						errmsg("repair target is not a regular or foreign table")));
+#endif
 	}
 
 	dropCommandList = list_make1(dropCommand->data);

@@ -193,8 +193,14 @@ DropShardsFromWorker(WorkerNode *workerNode, Oid relationId, List *shardInterval
 	}
 	else
 	{
+#if (PG_VERSION_NUM >= 100000)
+		ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
+						errmsg("expire target is not a regular or foreign or partitioned "
+							   "table")));
+#else
 		ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
 						errmsg("expire target is not a regular or foreign table")));
+#endif
 	}
 
 	connection = GetNodeConnection(connectionFlag, workerNode->workerName,

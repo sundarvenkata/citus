@@ -38,6 +38,7 @@
 #include "distributed/metadata_sync.h"
 #include "distributed/multi_copy.h"
 #include "distributed/multi_logical_planner.h"
+#include "distributed/multi_partitioning_utils.h"
 #include "distributed/multi_utility.h"
 #include "distributed/pg_dist_colocation.h"
 #include "distributed/pg_dist_partition.h"
@@ -347,6 +348,20 @@ CreateDistributedTable(Oid relationId, Var *distributionColumn, char distributio
 		CreateReferenceTableShard(relationId);
 	}
 
+	/* if this table is partitioned table, distribute its partitions too */
+	if (distributionMethod == DISTRIBUTE_BY_HASH && PartitionedTable(relationId))
+	{
+		List *partitionList = PartitionList(relationId);
+		ListCell *partitionCell = NULL;
+
+		foreach(partitionCell, partitionList)
+		{
+			Oid partitionRelationId = lfirst_oid(partitionCell);
+			CreateDistributedTable(partitionRelationId, distributionColumn,
+								   distributionMethod, colocationId, viaDeprecatedAPI);
+		}
+	}
+
 	/* copy over data for hash distributed and reference tables */
 	if (distributionMethod == DISTRIBUTE_BY_HASH ||
 		distributionMethod == DISTRIBUTE_BY_NONE)
@@ -467,6 +482,16 @@ EnsureDistributionConfiguration(Oid relationId, Var *distributionColumn,
 	EnsureTableNotDistributed(relationId);
 	EnsureLocalTableEmptyIfNecessary(relationId, distributionMethod, viaDeprecatedAPI);
 
+	if (viaDeprecatedAPI)
+	{
+		if (PartitionedTable(relationId))
+		{
+			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							errmsg("distributing partitioned tables in only supported "
+								   "with create_distributed_table UDF")));
+		}
+	}
+
 	relationDesc = RelationGetDescr(relation);
 	relationName = RelationGetRelationName(relation);
 
@@ -486,6 +511,47 @@ EnsureDistributionConfiguration(Oid relationId, Var *distributionColumn,
 						errmsg("cannot distribute relation: %s", relationName),
 						errdetail("Distributed relations must not use GENERATED "
 								  "... AS IDENTITY.")));
+	}
+
+	if (PartitionedTable(relationId))
+	{
+		/* distributing partitioned tables in only supported for hash-distribution */
+		if (distributionMethod != DISTRIBUTE_BY_HASH)
+		{
+			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							errmsg("distributing partitioned tables in only supported "
+								   "for hash-distributed tables")));
+		}
+
+		/* we cannot distribute tables with multi-level partitioning */
+		if (PartitionTable(relationId))
+		{
+			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							errmsg("Citus does not support distributing multi-level "
+								   "partitioned tables")));
+		}
+
+		/* we cannot distribute partitioned tables for replication factor > 1*/
+		if (ShardReplicationFactor > 1)
+		{
+			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							errmsg("Citus does not support distributing partitioned "
+								   "tables while replication factor is greater than 1")));
+		}
+	}
+
+	/* partitions cannot be distributed directly */
+	if (PartitionTable(relationId) && !IsDistributedTable(PartitionParentOid(relationId)))
+	{
+		char *relationName = get_rel_name(relationId);
+		char *parentRelationName = get_rel_name(PartitionParentOid(relationId));
+
+		ereport(ERROR, (errmsg("cannot distribute relation \"%s\" which is partition of "
+							   "\"%s\"", relationName, parentRelationName),
+						errdetail("Citus does not support distributing partitions "
+								  "directly."),
+						errhint("Distribute the partitioned table \"%s\" instead",
+								parentRelationName)));
 	}
 
 	/* check for support function needed by specified partition method */
@@ -985,6 +1051,7 @@ RegularTable(Oid relationId)
 	return false;
 }
 
+
 /*
  * CopyLocalDataIntoShards copies data from the local table, which is hidden
  * after converting it to a distributed table, into the shards of the distributed
@@ -1029,6 +1096,15 @@ CopyLocalDataIntoShards(Oid distributedRelationId)
 
 	/* take an ExclusiveLock to block all operations except SELECT */
 	distributedRelation = heap_open(distributedRelationId, ExclusiveLock);
+
+	/*
+	 * Skip copying data to partitioned tables, we will copy the data from
+	 * partition to partition's shards.
+	 */
+	if (PartitionedTable(distributedRelationId))
+	{
+		return;
+	}
 
 	/*
 	 * All writes have finished, make sure that we can see them by using the

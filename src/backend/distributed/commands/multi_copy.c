@@ -62,6 +62,7 @@
 #include "distributed/master_protocol.h"
 #include "distributed/metadata_cache.h"
 #include "distributed/multi_copy.h"
+#include "distributed/multi_partitioning_utils.h"
 #include "distributed/multi_physical_planner.h"
 #include "distributed/multi_shard_transaction.h"
 #include "distributed/placement_connection.h"
@@ -72,6 +73,7 @@
 #include "nodes/makefuncs.h"
 #include "tsearch/ts_locale.h"
 #include "utils/builtins.h"
+#include "utils/fmgroids.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/memutils.h"
@@ -136,7 +138,7 @@ static bool CitusCopyDestReceiverReceive(TupleTableSlot *slot,
 										 DestReceiver *copyDest);
 static void CitusCopyDestReceiverShutdown(DestReceiver *destReceiver);
 static void CitusCopyDestReceiverDestroy(DestReceiver *destReceiver);
-
+static void ClosePartitionedTablePartitions(Oid partitionedTableId);
 
 /*
  * CitusCopyFrom implements the COPY table_name FROM. It dispacthes the copy
@@ -400,6 +402,14 @@ CopyToExistingShards(CopyStmt *copyStatement, char *completionTag)
 
 		processedRowCount += 1;
 	}
+
+
+	/* if table is partitioned table, we need to close its partitions */
+	if (PartitionedTable(distributedRelation->rd_id))
+	{
+		ClosePartitionedTablePartitions(distributedRelation->rd_id);
+	}
+
 
 	EndCopyFrom(copyState);
 
@@ -2030,4 +2040,56 @@ CitusCopyDestReceiverDestroy(DestReceiver *destReceiver)
 	}
 
 	pfree(copyDest);
+}
+
+
+/*
+ * ClosePartitionedTablePartitions function closes all partitions of given partitioned
+ * table. It also closes all indexes of those partitions.
+ */
+static void
+ClosePartitionedTablePartitions(Oid partitionedTableId)
+{
+	List *partitionList = PartitionList(partitionedTableId);
+	ListCell *partitionCell = NULL;
+
+	foreach(partitionCell, partitionList)
+	{
+		Oid partitionId = lfirst_oid(partitionCell);
+		Relation pgIndex = NULL;
+		SysScanDesc scanDescriptor = NULL;
+		ScanKeyData scanKey[1];
+		int scanKeyCount = 1;
+		HeapTuple heapTuple = NULL;
+
+		Relation partitionRelation = relation_open(partitionId, NoLock);
+
+		pgIndex = heap_open(IndexRelationId, AccessShareLock);
+
+		ScanKeyInit(&scanKey[0], Anum_pg_index_indrelid,
+					BTEqualStrategyNumber, F_OIDEQ, partitionId);
+
+		scanDescriptor = systable_beginscan(pgIndex, IndexIndrelidIndexId, true,
+											NULL, scanKeyCount, scanKey);
+
+		heapTuple = systable_getnext(scanDescriptor);
+		while (HeapTupleIsValid(heapTuple))
+		{
+			Form_pg_index indexForm = (Form_pg_index) GETSTRUCT(heapTuple);
+			Oid indexId = indexForm->indexrelid;
+
+			Relation indexRelation = index_open(indexId, NoLock);
+			index_close(indexRelation, NoLock);
+			index_close(indexRelation, NoLock);
+
+			heapTuple = systable_getnext(scanDescriptor);
+		}
+
+		/* clean up scan and close system catalog */
+		systable_endscan(scanDescriptor);
+		heap_close(pgIndex, AccessShareLock);
+
+		relation_close(partitionRelation, NoLock);
+		relation_close(partitionRelation, NoLock);
+	}
 }
