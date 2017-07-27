@@ -138,6 +138,9 @@ extern void UpdateShardPlacementState(uint64 placementId, char shardState);
 extern void DeleteShardPlacementRow(uint64 placementId);
 extern void UpdateColocationGroupReplicationFactor(uint32 colocationId,
 												   int replicationFactor);
+extern void CreateDistributedTable(Oid relationId, Var *distributionColumn,
+								   char distributionMethod, uint32 colocationId,
+								   bool viaDeprecatedAPI);
 extern void CreateTruncateTrigger(Oid relationId);
 
 /* Remaining metadata utility functions  */
@@ -145,7 +148,9 @@ extern char * TableOwner(Oid relationId);
 extern void EnsureTablePermissions(Oid relationId, AclMode mode);
 extern void EnsureTableOwner(Oid relationId);
 extern void EnsureSuperUser(void);
-extern void EnsureReplicationSettings(Oid relationId, char replicationModel);
+extern void EnsureReplicationSettings(Oid relationId, char replicationModel,
+									  int replicationFactor);
+extern bool RegularTable(Oid relationId);
 extern bool TableReferenced(Oid relationId);
 extern char * ConstructQualifiedShardName(ShardInterval *shardInterval);
 extern Datum StringToDatum(char *inputString, Oid dataType);

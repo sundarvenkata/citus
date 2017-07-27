@@ -127,7 +127,7 @@ master_create_empty_shard(PG_FUNCTION_ARGS)
 
 	replicationModel = TableReplicationModel(relationId);
 
-	EnsureReplicationSettings(relationId, replicationModel);
+	EnsureReplicationSettings(relationId, replicationModel, ShardReplicationFactor);
 
 	/* generate new and unique shardId from sequence */
 	shardId = GetNextShardId();

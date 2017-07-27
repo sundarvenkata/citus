@@ -904,6 +904,11 @@ ColocatedTableId(Oid colocationId)
 	ScanKeyData scanKey[1];
 	int scanKeyCount = 1;
 
+	if (colocationId == INVALID_COLOCATION_ID)
+	{
+		return colocatedTableId;
+	}
+
 	ScanKeyInit(&scanKey[0], Anum_pg_dist_partition_colocationid,
 				BTEqualStrategyNumber, F_INT4EQ, ObjectIdGetDatum(colocationId));
 
