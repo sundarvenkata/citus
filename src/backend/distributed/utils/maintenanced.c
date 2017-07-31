@@ -22,8 +22,10 @@
 
 #include "access/xact.h"
 #include "libpq/pqsignal.h"
+#include "distributed/distributed_deadlock_detection.h"
 #include "distributed/maintenanced.h"
 #include "distributed/metadata_cache.h"
+#include "distributed/multi_router_executor.h"
 #include "postmaster/bgworker.h"
 #include "storage/ipc.h"
 #include "storage/proc.h"
@@ -72,6 +74,9 @@ typedef struct MaintenanceDaemonDBData
 	Latch *latch; /* pointer to the background worker's latch */
 } MaintenanceDaemonDBData;
 
+
+/* config variable for distributed deadlock detection timeout */
+double DistributedDeadlockDetectionTimeoutFactor = 2.0;
 
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 static MaintenanceDaemonControlData *MaintenanceDaemonControl = NULL;
@@ -248,7 +253,8 @@ CitusMaintenanceDaemonMain(Datum main_arg)
 	{
 		int rc;
 		int latchFlags = WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH;
-		int timeout = 10000; /* wake up at least every so often */
+		double timeout = 0;
+		bool foundDeadlock = false;
 
 		CHECK_FOR_INTERRUPTS();
 
@@ -257,6 +263,28 @@ CitusMaintenanceDaemonMain(Datum main_arg)
 		 * timeout indicates, it's ok to lower it to that value.  Expensive
 		 * tasks should do their own time math about whether to re-run checks.
 		 */
+
+		/* the config value of 1000 means disabling the deadlock detection */
+		if (DistributedDeadlockDetectionTimeoutFactor != 1000)
+		{
+			StartTransactionCommand();
+			foundDeadlock = CheckForDistributedDeadlocks();
+			CommitTransactionCommand();
+		}
+
+		/*
+		 * If we find any deadlocks, run the distributed deadlock detection
+		 * more often since it is likely that that are other deadlocks needs to
+		 * be resolved. Thus, we use 1/20 of the calculated value. With the default
+		 * values (i.e., deadlock_timeout 1 seconds,
+		 * citus.distributed_deadlock_detection_factor 2), we'd be able to cancel
+		 * ~10 distributed deadlocks.
+		 */
+		timeout = DistributedDeadlockDetectionTimeoutFactor * DeadlockTimeout;
+		if (foundDeadlock)
+		{
+			timeout = timeout / 20.0;
+		}
 
 		/*
 		 * Wait until timeout, or until somebody wakes us up.

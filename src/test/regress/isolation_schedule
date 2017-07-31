@@ -16,3 +16,4 @@ test: isolation_distributed_transaction_id isolation_progress_monitoring
 test: isolation_dump_local_wait_edges isolation_dump_global_wait_edges
 
 test: isolation_replace_wait_function
+test: isolation_distributed_deadlock_detection

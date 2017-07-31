@@ -10,7 +10,9 @@
  */
 
 #include "postgres.h"
+
 #include "miscadmin.h"
+#include "pgstat.h"
 
 #include "access/hash.h"
 #include "distributed/backend_data.h"
@@ -24,12 +26,335 @@
 #include "utils/hsearch.h"
 #include "utils/timestamp.h"
 
+/* GUC, determining whether debug messages for deadlock detection sent to LOG */
+bool LogDistributedDeadlockDetection = false;
 
+static bool CheckDeadlockForTransactionNode(TransactionNode *startingTransactionNode,
+											TransactionNode **transactionNodeStack,
+											List **deadlockPath);
+static void FindDeadlockPath(TransactionNode *cycledTransactionNode,
+							 TransactionNode **transactionNodeStack, List **deadlockPath);
+static void ResetVisitedFields(HTAB *adjacencyList);
+static void AssocateDistributedTransactionWithBackendProc(TransactionNode *
+														  transactionNode);
 static TransactionNode * GetOrCreateTransactionNode(HTAB *adjacencyList,
 													DistributedTransactionId *
 													transactionId);
 static uint32 DistributedTransactionIdHash(const void *key, Size keysize);
-static int DistributedTransactionIdCompare(const void *a, const void *b, Size keysize);
+static int DistributedTransactionIdCompareHash(const void *a, const void *b, Size
+											   keysize);
+static int DistributedTransactionIdCompare(const void *a, const void *b);
+static void LogCancellingBackend(TransactionNode *transactionNode);
+static void LogTransactionNode(TransactionNode *transactionNode);
+static void LogAdjacencyLists(HTAB *adjacencyLists);
+static void LogDistributedDeadlockDebugMessage(const char *errorMessage);
+
+
+PG_FUNCTION_INFO_V1(check_distributed_deadlocks);
+
+
+/*
+ * check_distributed_deadlocks is the external API for manually
+ * checking for distributed deadlocks. For the details, see
+ * CheckForDistributedDeadlocks().
+ */
+Datum
+check_distributed_deadlocks(PG_FUNCTION_ARGS)
+{
+	bool deadlockFound = CheckForDistributedDeadlocks();
+
+	return BoolGetDatum(deadlockFound);
+}
+
+
+/*
+ * CheckForDistributedDeadlocks is the entry point for detecing
+ * distributed deadlocks.
+ *
+ * In plain words, the function first builds a wait graph by
+ * adding the wait edges from the local node and then adding the
+ * remote wait edges to form a global wait graph. Later, the wait
+ * graph is converted into another graph representation (adjacency
+ * lists) for more efficient searches. Finally, a DFS is done on
+ * the adjacency lists. Finding a cycle in the graph unveils a
+ * distributed deadlock. Upon finding a deadlock, the youngest
+ * participant backend is cancelled.
+ *
+ * The function returns true if a deadlock is found. Otherwise, returns
+ * false.
+ */
+bool
+CheckForDistributedDeadlocks(void)
+{
+	WaitGraph *waitGraph = BuildGlobalWaitGraph();
+	HTAB *adjacencyLists = BuildAdjacencyListsForWaitGraph(waitGraph);
+	HASH_SEQ_STATUS status;
+	TransactionNode *transactionNode = NULL;
+	int edgeCount = waitGraph->edgeCount;
+
+	LogDistributedDeadlockDebugMessage("Distributed deadlock detection starts");
+	LogAdjacencyLists(adjacencyLists);
+
+	/*
+	 * We iterate on transaction nodes and search for deadlocks where the
+	 * starting node is the given transaction node.
+	 */
+	hash_seq_init(&status, adjacencyLists);
+	while ((transactionNode = (TransactionNode *) hash_seq_search(&status)) != 0)
+	{
+		bool deadlockFound = false;
+		List *deadlockPath = NIL;
+		TransactionNode *transactionNodeStack[edgeCount];
+
+		/* we're only interested in finding deadlocks originating from this node */
+		if (transactionNode->transactionId.initiatorNodeIdentifier != GetLocalGroupId())
+		{
+			continue;
+		}
+
+		ResetVisitedFields(adjacencyLists);
+
+		deadlockFound = CheckDeadlockForTransactionNode(transactionNode,
+														transactionNodeStack,
+														&deadlockPath);
+		if (deadlockFound)
+		{
+			TransactionNode *youngestTransaction = transactionNode;
+			ListCell *participantTransactionCell = NULL;
+
+			/* there should be at least two transactions to get into a deadlock */
+			Assert(list_length(deadlockPath) > 1);
+
+			LogDistributedDeadlockDebugMessage("Distributed deadlock found among the "
+											   "following distributed transactions:");
+
+			/*
+			 * We search for the youngest participant for two reasons
+			 * (i) predictable results (ii) cancel the youngest transaction
+			 * (i.e., if a DDL continues for 1 hour and deadlocks with a
+			 * SELECT continues for 10 msec, we prefer to cancel the SELECT).
+			 *
+			 * We're also searching for the youngest transactions initiated by
+			 * this node.
+			 */
+			foreach(participantTransactionCell, deadlockPath)
+			{
+				TransactionNode *currentNode =
+					(TransactionNode *) lfirst(participantTransactionCell);
+
+				TimestampTz youngestTimestamp =
+					youngestTransaction->transactionId.timestamp;
+				TimestampTz currentTimestamp = currentNode->transactionId.timestamp;
+
+				AssocateDistributedTransactionWithBackendProc(currentNode);
+
+				LogTransactionNode(currentNode);
+
+				if (currentNode->transactionId.initiatorNodeIdentifier ==
+					GetLocalGroupId() &&
+					timestamptz_cmp_internal(currentTimestamp, youngestTimestamp) == 1)
+				{
+					youngestTransaction = currentNode;
+				}
+			}
+
+			/* we should find the backend */
+			Assert(youngestTransaction->initiatorProc != NULL);
+
+			CancelTransactionDueToDeadlock(youngestTransaction->initiatorProc);
+			LogCancellingBackend(youngestTransaction);
+
+			hash_seq_term(&status);
+
+			return true;
+		}
+	}
+
+	LogDistributedDeadlockDebugMessage("No distributed deadlocks found");
+
+	return false;
+}
+
+
+/*
+ * CheckDeadlockForDistributedTransaction does a DFS starting with the given
+ * transaction node and checks for a cycle (i.e., the node can be reached again
+ * while traversing the graph).
+ *
+ * Finding a cycle  indicates a distributed deadlock and the function returns
+ * true on that case. Also, the deadlockPath is filled with the transaction
+ * nodes that form the cycle.
+ */
+static bool
+CheckDeadlockForTransactionNode(TransactionNode *startingTransactionNode,
+								TransactionNode **transactionNodeStack,
+								List **deadlockPath)
+{
+	List *waitingTransactionNodes = list_copy(startingTransactionNode->waitsFor);
+	int currentStackDepth = 0;
+	ListCell *waitingTransactionCell = NULL;
+
+	/*
+	 * We keep transactionNodeStack to keep track of the deadlock paths. At this point,
+	 * adjust the depth of the starting node and set the stack's first element with
+	 * the starting node.
+	 */
+	startingTransactionNode->currentStackDepth = currentStackDepth;
+	transactionNodeStack[currentStackDepth] = startingTransactionNode;
+
+	/* iterate on the children of the starting node and set their depths */
+	foreach(waitingTransactionCell, waitingTransactionNodes)
+	{
+		TransactionNode *waitingTransactionNode =
+			(TransactionNode *) lfirst(waitingTransactionCell);
+
+		waitingTransactionNode->currentStackDepth =
+			startingTransactionNode->currentStackDepth + 1;
+	}
+
+	/* traverse the graph and search for the deadlocks */
+	while (waitingTransactionNodes != NIL)
+	{
+		TransactionNode *waitingTransactionNode =
+			(TransactionNode *) linitial(waitingTransactionNodes);
+		ListCell *currentWaitForCell = NULL;
+
+		waitingTransactionNodes = list_delete_first(waitingTransactionNodes);
+
+		/* cycle found, let the caller know about the cycle */
+		if (waitingTransactionNode == startingTransactionNode)
+		{
+			FindDeadlockPath(waitingTransactionNode, transactionNodeStack, deadlockPath);
+
+			return true;
+		}
+
+		/* don't need to revisit the node again */
+		if (waitingTransactionNode->transactionVisited)
+		{
+			continue;
+		}
+
+		waitingTransactionNode->transactionVisited = true;
+
+		/* set the stack's corresponding element with the current node */
+		currentStackDepth = waitingTransactionNode->currentStackDepth;
+		transactionNodeStack[currentStackDepth] = waitingTransactionNode;
+
+		/* as we traverse outgoing edges, increment the depth */
+		currentStackDepth++;
+
+		/* prepend to the list to continue depth-first search */
+		foreach(currentWaitForCell, waitingTransactionNode->waitsFor)
+		{
+			TransactionNode *waitForTransaction =
+				(TransactionNode *) lfirst(currentWaitForCell);
+
+			/*
+			 * We add both the waiting node and its parent to simplify finding the
+			 * deadlock path.
+			 */
+			waitingTransactionNodes =
+				lcons(waitingTransactionNode, waitingTransactionNodes);
+
+			waitForTransaction->currentStackDepth = currentStackDepth;
+			waitingTransactionNodes = lcons(waitForTransaction, waitingTransactionNodes);
+		}
+	}
+
+	return false;
+}
+
+
+/*
+ * FindDeadlockPath gets the transaction node on which the cycle is found. Later,
+ * we add the depth number of elements of the cycled node from the transaction
+ * stack to the deadlockPath.
+ */
+static void
+FindDeadlockPath(TransactionNode *cycledTransactionNode,
+				 TransactionNode **transactionNodeStack,
+				 List **deadlockPath)
+{
+	int deadlockStackDepth = cycledTransactionNode->currentStackDepth;
+	int stackIndex = 0;
+
+	for (stackIndex = 0; stackIndex < deadlockStackDepth; stackIndex++)
+	{
+		*deadlockPath = lappend(*deadlockPath, transactionNodeStack[stackIndex]);
+	}
+}
+
+
+/*
+ * ResetVisitedFields goes over all the elements of the input adjacency list
+ * and sets transactionVisited to false.
+ */
+static void
+ResetVisitedFields(HTAB *adjacencyList)
+{
+	HASH_SEQ_STATUS status;
+	TransactionNode *resetNode = NULL;
+
+	/* reset all visited fields */
+	hash_seq_init(&status, adjacencyList);
+
+	while ((resetNode = (TransactionNode *) hash_seq_search(&status)) != 0)
+	{
+		resetNode->transactionVisited = false;
+	}
+}
+
+
+/*
+ * AssocateDistributedTransactionWithBackendProc gets a transaction node
+ * and searches the corresponding backend. Once found, transactionNodes'
+ * initiatorProc is set to it.
+ *
+ * The function goes over all the backends, checks for the backend with
+ * the same transaction number as the given transaction node.
+ */
+static void
+AssocateDistributedTransactionWithBackendProc(TransactionNode *transactionNode)
+{
+	int backendIndex = 0;
+
+	for (backendIndex = 0; backendIndex < MaxBackends; ++backendIndex)
+	{
+		PGPROC *currentProc = &ProcGlobal->allProcs[backendIndex];
+		BackendData currentBackendData;
+		DistributedTransactionId *currentTransactionId = NULL;
+
+		/* we're not interested in processes that are not active or waiting on a lock */
+		if (currentProc->pid <= 0)
+		{
+			continue;
+		}
+
+		GetBackendDataForProc(currentProc, &currentBackendData);
+
+		/* we're only interested in distribtued transactions */
+		if (!IsInDistributedTransaction(&currentBackendData))
+		{
+			continue;
+		}
+
+		currentTransactionId = &currentBackendData.transactionId;
+
+		if (currentTransactionId->transactionNumber !=
+			transactionNode->transactionId.transactionNumber)
+		{
+			continue;
+		}
+
+		/* at the point we should only have transactions initiated by this node */
+		Assert(currentTransactionId->initiatorNodeIdentifier == GetLocalGroupId());
+
+		transactionNode->initiatorProc = currentProc;
+
+		break;
+	}
+}
 
 
 /*
@@ -55,7 +380,7 @@ static int DistributedTransactionIdCompare(const void *a, const void *b, Size ke
  *  The format of the adjacency list becomes the following:
  *      [transactionId] = [transactionNode->waitsFor {list of waiting transaction nodes}]
  */
-extern HTAB *
+HTAB *
 BuildAdjacencyListsForWaitGraph(WaitGraph *waitGraph)
 {
 	HASHCTL info;
@@ -68,7 +393,7 @@ BuildAdjacencyListsForWaitGraph(WaitGraph *waitGraph)
 	info.keysize = sizeof(DistributedTransactionId);
 	info.entrysize = sizeof(TransactionNode);
 	info.hash = DistributedTransactionIdHash;
-	info.match = DistributedTransactionIdCompare;
+	info.match = DistributedTransactionIdCompareHash;
 	info.hcxt = CurrentMemoryContext;
 	hashFlags = (HASH_ELEM | HASH_FUNCTION | HASH_CONTEXT | HASH_COMPARE);
 
@@ -121,6 +446,7 @@ GetOrCreateTransactionNode(HTAB *adjacencyList, DistributedTransactionId *transa
 	if (!found)
 	{
 		transactionNode->waitsFor = NIL;
+		transactionNode->initiatorProc = NULL;
 	}
 
 	return transactionNode;
@@ -148,6 +474,17 @@ DistributedTransactionIdHash(const void *key, Size keysize)
 
 
 /*
+ * Just a wrapper around DistributedTransactionIdCompare(). Used for hash compare
+ * function thus requires a different signature.
+ */
+static int
+DistributedTransactionIdCompareHash(const void *a, const void *b, Size keysize)
+{
+	return DistributedTransactionIdCompare(a, b);
+}
+
+
+/*
  * DistributedTransactionIdCompare compares DistributedTransactionId's a and b
  * and returns -1 if a < b, 1 if a > b, 0 if they are equal.
  *
@@ -155,7 +492,7 @@ DistributedTransactionIdHash(const void *key, Size keysize)
  * number, then node identifier.
  */
 static int
-DistributedTransactionIdCompare(const void *a, const void *b, Size keysize)
+DistributedTransactionIdCompare(const void *a, const void *b)
 {
 	DistributedTransactionId *xactIdA = (DistributedTransactionId *) a;
 	DistributedTransactionId *xactIdB = (DistributedTransactionId *) b;
@@ -190,4 +527,162 @@ DistributedTransactionIdCompare(const void *a, const void *b, Size keysize)
 	{
 		return 0;
 	}
+}
+
+
+/*
+ * Iterates over the given adjacency lists and sends them to the logs via
+ * LogDistributedDeadlockDebugMessage().
+ */
+static void
+LogAdjacencyLists(HTAB *adjacencyLists)
+{
+	HASH_SEQ_STATUS debugStatus;
+	TransactionNode *transactionNode = NULL;
+	int processedEntryCount = 0;
+
+	if (!LogDistributedDeadlockDetection)
+	{
+		return;
+	}
+
+
+	/* iterate on all nodes */
+	hash_seq_init(&debugStatus, adjacencyLists);
+
+	while ((transactionNode = (TransactionNode *) hash_seq_search(&debugStatus)) != 0)
+	{
+		++processedEntryCount;
+		if (processedEntryCount == 1)
+		{
+			LogDistributedDeadlockDebugMessage(
+				"----------Adjacency lists starts----------");
+		}
+
+		LogTransactionNode(transactionNode);
+	}
+
+	if (processedEntryCount != 0)
+	{
+		LogDistributedDeadlockDebugMessage("----------Adjacency lists ends----------");
+	}
+	else
+	{
+		LogDistributedDeadlockDebugMessage("No dependencies exist among distributed "
+										   "transactions");
+	}
+}
+
+
+/*
+ * LogCancellingBackend should only be called when a distributed transaction's
+ * backend is cancelled due to distributed deadlocks. It sends which transaction
+ * is cancelled and its corresponding pid to the log.
+ */
+static
+void
+LogCancellingBackend(TransactionNode *transactionNode)
+{
+	StringInfo logMessage = NULL;
+
+	if (!LogDistributedDeadlockDetection)
+	{
+		return;
+	}
+
+	logMessage = makeStringInfo();
+
+	appendStringInfo(logMessage, "Cancelling the following backend "
+								 "to resolve distributed deadlock "
+								 "(transaction numner = %ld, pid = %d)",
+					 transactionNode->transactionId.transactionNumber,
+					 transactionNode->initiatorProc->pid);
+
+	LogDistributedDeadlockDebugMessage(logMessage->data);
+}
+
+
+/*
+ * LogTransactionNode converts the transaction node to a human readable form
+ * and sends to the logs via LogDistributedDeadlockDebugMessage().
+ */
+static void
+LogTransactionNode(TransactionNode *transactionNode)
+{
+	StringInfo logMessage = NULL;
+	DistributedTransactionId *transactionId = NULL;
+
+	if (!LogDistributedDeadlockDetection)
+	{
+		return;
+	}
+
+	logMessage = makeStringInfo();
+	transactionId = &(transactionNode->transactionId);
+
+	appendStringInfo(logMessage, "[DistributedTransactionId: (%d, %ld, %s)] = ",
+					 transactionId->initiatorNodeIdentifier,
+					 transactionId->transactionNumber,
+					 timestamptz_to_str(transactionId->timestamp));
+
+	appendStringInfo(logMessage, "[WaitsFor transaction numbers: %s]",
+					 WaitsForToString(transactionNode->waitsFor));
+
+	/* log the backend query if the proc is associated with the transaction */
+	if (transactionNode->initiatorProc != NULL)
+	{
+		const char *backendQuery =
+			pgstat_get_backend_current_activity(transactionNode->initiatorProc->pid,
+												false);
+
+		appendStringInfo(logMessage, "[Backend Query: %s]", backendQuery);
+	}
+
+	LogDistributedDeadlockDebugMessage(logMessage->data);
+}
+
+
+/*
+ * LogDistributedDeadlockDebugMessage checks EnableDistributedDeadlockDebugging flag. If
+ * it is true, the input message is sent to the logs with LOG level. Also, current timestamp
+ * is prepanded to the message.
+ */
+static void
+LogDistributedDeadlockDebugMessage(const char *errorMessage)
+{
+	if (!LogDistributedDeadlockDetection)
+	{
+		return;
+	}
+
+	ereport(LOG, (errmsg("[%s] %s", timestamptz_to_str(GetCurrentTimestamp()),
+						 errorMessage)));
+}
+
+
+/*
+ * WaitsForToString is only intended for testing and debugging. It gets a
+ * waitsForList and returns the list of transaction nodes' transactionNumber
+ * in a string.
+ */
+char *
+WaitsForToString(List *waitsFor)
+{
+	StringInfo transactionIdStr = makeStringInfo();
+	ListCell *waitsForCell = NULL;
+
+	foreach(waitsForCell, waitsFor)
+	{
+		TransactionNode *waitingNode = (TransactionNode *) lfirst(waitsForCell);
+
+		if (transactionIdStr->len != 0)
+		{
+			appendStringInfoString(transactionIdStr, ",");
+		}
+
+		appendStringInfo(transactionIdStr, "%ld",
+						 waitingNode->transactionId.transactionNumber);
+	}
+
+	return transactionIdStr->data;
 }
