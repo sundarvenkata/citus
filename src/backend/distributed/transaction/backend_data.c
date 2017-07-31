@@ -527,3 +527,30 @@ GetBackendDataForProc(PGPROC *proc, BackendData *result)
 
 	SpinLockRelease(&backendData->mutex);
 }
+
+
+/*
+ * KillTransactionDueToDeadlock sends a SIGINT to a distributed transaction
+ * due to a deadlock being detected. We also mark killedDueToDeadlock for
+ * better error messages.
+ */
+void
+KillBackendDueToDeadlock(PGPROC *proc)
+{
+	BackendData *backendData = &backendManagementShmemData->backends[proc->pgprocno];
+
+	SpinLockAcquire(&backendData->mutex);
+
+	/* send a SIGINT only if the process is still in a distributed transaction */
+	if (backendData->transactionId.transactionNumber != 0)
+	{
+		backendData->killedDueToDeadlock = true;
+		SpinLockRelease(&backendData->mutex);
+
+		kill(proc->pid, SIGINT);
+	}
+	else
+	{
+		SpinLockRelease(&backendData->mutex);
+	}
+}

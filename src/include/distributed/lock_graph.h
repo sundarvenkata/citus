@@ -55,6 +55,7 @@ typedef struct WaitGraph
 
 
 extern WaitGraph * BuildGlobalWaitGraph(void);
+extern bool IsInDistributedTransaction(BackendData *backendData);
 
 
 #endif /* LOCK_GRAPH_H */
