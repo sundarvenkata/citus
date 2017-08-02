@@ -56,7 +56,6 @@ static void AddEdgesForWaitQueue(WaitGraph *waitGraph, PGPROC *waitingProc,
 static void AddWaitEdge(WaitGraph *waitGraph, PGPROC *waitingProc, PGPROC *blockingProc,
 						PROCStack *remaining);
 static WaitEdge * AllocWaitEdge(WaitGraph *waitGraph);
-static bool IsProcessWaitingForLock(PGPROC *proc);
 static bool IsSameLockGroup(PGPROC *leftProc, PGPROC *rightProc);
 static bool IsConflictingLockMask(int holdMask, int conflictMask);
 
@@ -699,7 +698,7 @@ AllocWaitEdge(WaitGraph *waitGraph)
 /*
  * IsProcessWaitingForLock returns whether a given process is waiting for a lock.
  */
-static bool
+bool
 IsProcessWaitingForLock(PGPROC *proc)
 {
 	return proc->waitStatus == STATUS_WAITING;

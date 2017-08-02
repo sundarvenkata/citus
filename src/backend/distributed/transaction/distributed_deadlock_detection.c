@@ -25,10 +25,14 @@
 #include "utils/timestamp.h"
 
 
-static bool CheckDeadlockForDistributedTransaction(TransactionNode *transactionNode);
+static bool CheckDeadlockForTransactionNode(TransactionNode *startingTransactionNode,
+											List **deadlockPath);
+static bool CheckDeadlockForTransactionNodeRecurse(TransactionNode *
+												   startingTransactionNode,
+												   List *waitingTransactionNodes,
+												   List **deadlockPath);
 static void ResetVisitedFields(HTAB *adjacencyList);
-static List * GetSortedDistributedTransactionIdList(HTAB *adjacencyList);
-static void AssicateDistributedTransactionWithBackendProc(TransactionNode *
+static void AssocateDistributedTransactionWithBackendProc(TransactionNode *
 														  transactionNode);
 static TransactionNode * GetOrCreateTransactionNode(HTAB *adjacencyList,
 													DistributedTransactionId *
@@ -63,11 +67,11 @@ check_distributed_deadlocks(PG_FUNCTION_ARGS)
  * In plain words, the function first builds a wait graph by
  * adding the wait edges from the local node and then adding the
  * remote wait edges to form a global wait graph. Later, the wait
- * graph is converted into an adjacency list for more efficient
- * searches. Finally, a DFS is done on the adjacency list.
- * Finding a cycle in the graph unveils a distributed deadlock.
- * Upon finding a deadlock, one of the participant backend is
- * killed by sending a SIGINT signal.
+ * graph is converted into another graph representation (adjacency
+ * lists) for more efficient searches. Finally, a DFS is done on
+ * the adjacency lists. Finding a cycle in the graph unveils a
+ * distributed deadlock. Upon finding a deadlock, the youngest
+ * participant backend is killed.
  *
  * The function returns true if a deadlock is found. Otherwise, returns
  * false.
@@ -77,37 +81,56 @@ CheckForDistributedDeadlocks(void)
 {
 	WaitGraph *waitGraph = BuildGlobalWaitGraph();
 	HTAB *adjacencyList = BuildAdjacencyListsForWaitGraph(waitGraph);
-	List *sortedTransactionIds = GetSortedDistributedTransactionIdList(adjacencyList);
-	ListCell *transactionIdCell = NULL;
+	HASH_SEQ_STATUS status;
+	TransactionNode *transactionNode = NULL;
 
 	/*
-	 * We need to iterate on all transactions since it is not guranteed that the
-	 * transactions form a connected graph.
-	 *
-	 * We use sorted list to get (i) predictable results (ii) kill the youngest
-	 * transaction (i.e., if a DDL continues for 1 hour and deadlocks with a
-	 * SELECT continues for 10 msec, we prefer to kill the SELECT).
+	 * We iterate on transaction nodes and search for deadlocks where the
+	 * starting node is the given transaction node.
 	 */
-	foreach(transactionIdCell, sortedTransactionIds)
+	hash_seq_init(&status, adjacencyList);
+	while ((transactionNode = (TransactionNode *) hash_seq_search(&status)) != 0)
 	{
-		DistributedTransactionId *transactionId =
-			(DistributedTransactionId *) lfirst(transactionIdCell);
-		bool transactionFound = false;
 		bool deadlockFound = false;
-		TransactionNode *transactionNode =
-			(TransactionNode *) hash_search(adjacencyList, transactionId, HASH_FIND,
-											&transactionFound);
-
-		Assert(transactionFound);
+		List *deadlockPath = NIL;
 
 		ResetVisitedFields(adjacencyList);
 
-		deadlockFound = CheckDeadlockForDistributedTransaction(transactionNode);
+		deadlockFound = CheckDeadlockForTransactionNode(transactionNode, &deadlockPath);
 		if (deadlockFound)
 		{
-			AssicateDistributedTransactionWithBackendProc(transactionNode);
+			TransactionNode *youngestTransaction = transactionNode;
+			ListCell *participantTransactionCell = NULL;
 
-			KillBackendDueToDeadlock(transactionNode->initiatorProc);
+			/* there should be at least two transactions to get into a deadlock */
+			Assert(list_length(deadlockPath) > 1);
+
+			/*
+			 * We search for the youngest participant for two reasons
+			 * (i) predictable results (ii) kill the youngest transaction
+			 * (i.e., if a DDL continues for 1 hour and deadlocks with a
+			 * SELECT continues for 10 msec, we prefer to kill the SELECT).
+			 */
+			foreach(participantTransactionCell, deadlockPath)
+			{
+				TransactionNode *currentNode =
+					(TransactionNode *) lfirst(participantTransactionCell);
+
+				AssocateDistributedTransactionWithBackendProc(currentNode);
+
+				if (youngestTransaction->transactionId.timestamp >
+					currentNode->transactionId.timestamp)
+				{
+					youngestTransaction = currentNode;
+				}
+			}
+
+			/* we should find the backend */
+			Assert(youngestTransaction->initiatorProc != NULL);
+
+			KillBackendDueToDeadlock(youngestTransaction->initiatorProc);
+
+			hash_seq_term(&status);
 
 			return true;
 		}
@@ -118,28 +141,49 @@ CheckForDistributedDeadlocks(void)
 
 
 /*
- * CheckDeadlockForDistributedTransaction gets a transaction node and returns
- * true if the given transaction participates in a distributed transaction.
+ * CheckDeadlockForTransactionNode traverses the graph by a DFS,
+ * starting with the given node. The function checks for a cycle
+ * (i.e., the given node can be reached again while traversing the graph).
  *
- * In essence, the function does a DFS starting with the given transaction node
- * and checks for a cycle. Finding a cycle indicates a distributed deadlock and
- * the function returns true on that case.
+ * Finding a cycle indicates a distributed deadlock and the function returns
+ * true on that case. Also, once a deadlock found, all the participant
+ * transactions are provided to the caller via the deadlockPath list.
  */
-static bool
-CheckDeadlockForDistributedTransaction(TransactionNode *transactionNode)
+static
+bool
+CheckDeadlockForTransactionNode(TransactionNode *startingTransactionNode,
+								List **deadlockPath)
 {
-	List *waitingTransactionNodes = transactionNode->waitsFor;
+	/* the starting node is in the deadlock path by default if a transaction found */
+	*deadlockPath = list_make1(startingTransactionNode);
 
+	return CheckDeadlockForTransactionNodeRecurse(startingTransactionNode,
+												  startingTransactionNode->waitsFor,
+												  deadlockPath);
+}
+
+
+/*
+ * CheckDeadlockForTransactionNodeRecurse is the workhorse for doing the DFS.
+ * The function recursively walks over the waiting transaction nodes and
+ * keeps track of the transactions that are part of the deadlock by updating
+ * the deadlockPath list. The deadLockPath is only valid if a deadlock found.
+ */
+static
+bool
+CheckDeadlockForTransactionNodeRecurse(TransactionNode *startingTransactionNode,
+									   List *waitingTransactionNodes,
+									   List **deadlockPath)
+{
 	while (waitingTransactionNodes != NIL)
 	{
 		TransactionNode *waitingTransactionNode =
 			(TransactionNode *) linitial(waitingTransactionNodes);
-		ListCell *currentWaitForCell = NULL;
 
-		waitingTransactionNodes = list_delete_first(waitingTransactionNodes);
+		/* add the transaction which is being processed to the deadlock path */
+		*deadlockPath = lcons(waitingTransactionNode, *deadlockPath);
 
-		/* cycle found, let the caller know about the cycle */
-		if (waitingTransactionNode == transactionNode)
+		if (waitingTransactionNode == startingTransactionNode)
 		{
 			return true;
 		}
@@ -152,16 +196,19 @@ CheckDeadlockForDistributedTransaction(TransactionNode *transactionNode)
 
 		waitingTransactionNode->transactionVisited = true;
 
-		/* prepend to the list to continue depth-first search */
-		foreach(currentWaitForCell, waitingTransactionNode->waitsFor)
+		if (CheckDeadlockForTransactionNodeRecurse(startingTransactionNode,
+												   waitingTransactionNode->waitsFor,
+												   deadlockPath))
 		{
-			TransactionNode *waitForTransaction =
-				(TransactionNode *) lfirst(currentWaitForCell);
-
-			waitingTransactionNodes =
-				lcons(waitForTransaction, waitingTransactionNodes);
+			return true;
 		}
+
+		/* we haven't found any deadlocks using this path */
+		*deadlockPath = list_delete_first(*deadlockPath);
 	}
+
+	/* no deadlocks found */
+	*deadlockPath = NIL;
 
 	return false;
 }
@@ -188,7 +235,7 @@ ResetVisitedFields(HTAB *adjacencyList)
 
 
 /*
- * AssicateDistributedTransactionWithBackendProc gets a transaction node
+ * AssocateDistributedTransactionWithBackendProc gets a transaction node
  * and searches the corresponding backend. Once found, transactionNodes'
  * initiatorProc is set to it.
  *
@@ -196,7 +243,7 @@ ResetVisitedFields(HTAB *adjacencyList)
  * the same transaction number as the given transaction node.
  */
 static void
-AssicateDistributedTransactionWithBackendProc(TransactionNode *transactionNode)
+AssocateDistributedTransactionWithBackendProc(TransactionNode *transactionNode)
 {
 	int backendIndex = 0;
 
@@ -206,7 +253,7 @@ AssicateDistributedTransactionWithBackendProc(TransactionNode *transactionNode)
 		BackendData currentBackendData;
 		DistributedTransactionId *currentTransactionId = NULL;
 
-		/* we're not interested in processes that are not active */
+		/* we're not interested in processes that are not active or waiting on a lock */
 		if (currentProc->pid <= 0)
 		{
 			continue;
@@ -235,36 +282,6 @@ AssicateDistributedTransactionWithBackendProc(TransactionNode *transactionNode)
 
 		break;
 	}
-}
-
-
-/*
- * GetSortedDistributedTransactionIdList gets an adjaceny list and
- * returns a list where each element is a node in the adjacency list.
- *
- * The list is then sorted via DistributedTransactionIdCompare (i.e., sort
- * by timestamp -> transaction number -> node id).
- */
-static List *
-GetSortedDistributedTransactionIdList(HTAB *adjacencyList)
-{
-	List *transactionIds = NIL;
-	List *sortedTransactionIds = NIL;
-
-	HASH_SEQ_STATUS status;
-	TransactionNode *transactionNode = NULL;
-
-	/* reset all visited fields */
-	hash_seq_init(&status, adjacencyList);
-
-	while ((transactionNode = (TransactionNode *) hash_seq_search(&status)) != 0)
-	{
-		transactionIds = lappend(transactionIds, &transactionNode->transactionId);
-	}
-
-	sortedTransactionIds = SortList(transactionIds, DistributedTransactionIdCompare);
-
-	return sortedTransactionIds;
 }
 
 

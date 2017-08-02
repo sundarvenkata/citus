@@ -530,9 +530,8 @@ GetBackendDataForProc(PGPROC *proc, BackendData *result)
 
 
 /*
- * KillTransactionDueToDeadlock sends a SIGINT to a distributed transaction
- * due to a deadlock being detected. We also mark killedDueToDeadlock for
- * better error messages.
+ * KillTransactionDueToDeadlock kills the input proc and also marks the backend
+ * data with this information.
  */
 void
 KillBackendDueToDeadlock(PGPROC *proc)
