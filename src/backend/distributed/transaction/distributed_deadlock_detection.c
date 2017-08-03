@@ -80,7 +80,7 @@ bool
 CheckForDistributedDeadlocks(void)
 {
 	WaitGraph *waitGraph = BuildGlobalWaitGraph();
-	HTAB *adjacencyList = BuildAdjacencyListsForWaitGraph(waitGraph);
+	HTAB *adjacencyLists = BuildAdjacencyListsForWaitGraph(waitGraph);
 	HASH_SEQ_STATUS status;
 	TransactionNode *transactionNode = NULL;
 
@@ -88,13 +88,19 @@ CheckForDistributedDeadlocks(void)
 	 * We iterate on transaction nodes and search for deadlocks where the
 	 * starting node is the given transaction node.
 	 */
-	hash_seq_init(&status, adjacencyList);
+	hash_seq_init(&status, adjacencyLists);
 	while ((transactionNode = (TransactionNode *) hash_seq_search(&status)) != 0)
 	{
 		bool deadlockFound = false;
 		List *deadlockPath = NIL;
 
-		ResetVisitedFields(adjacencyList);
+		/* we're only interested in finding deadlocks originating from this node */
+		if (transactionNode->transactionId.initiatorNodeIdentifier != GetLocalGroupId())
+		{
+			continue;
+		}
+
+		ResetVisitedFields(adjacencyLists);
 
 		deadlockFound = CheckDeadlockForTransactionNode(transactionNode, &deadlockPath);
 		if (deadlockFound)
