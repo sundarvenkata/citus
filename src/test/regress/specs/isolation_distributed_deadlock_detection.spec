@@ -68,12 +68,5 @@ step "s2-finish"
   COMMIT;
 }
 
-session "s3"
 
-step "s3-check-deadlock"
-{
-	SELECT check_distributed_deadlocks();
-}
-
-
-permutation "s1-set-deadlock-prevention" "s2-set-deadlock-prevention" "s1-update-1" "s2-update-2" "s2-update-1" "s1-update-2" "s3-check-deadlock" "s1-finish" "s2-finish"
+permutation "s1-set-deadlock-prevention" "s2-set-deadlock-prevention" "s1-update-1" "s2-update-2" "s2-update-1" "s1-update-2" "s1-finish" "s2-finish"
