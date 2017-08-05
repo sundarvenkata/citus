@@ -121,10 +121,14 @@ CheckForDistributedDeadlocks(void)
 				TransactionNode *currentNode =
 					(TransactionNode *) lfirst(participantTransactionCell);
 
+				TimestampTz youngestTimestamp =
+					youngestTransaction->transactionId.timestamp;
+				TimestampTz currentTimestamp = currentNode->transactionId.timestamp;
+
+
 				AssocateDistributedTransactionWithBackendProc(currentNode);
 
-				if (youngestTransaction->transactionId.timestamp >
-					currentNode->transactionId.timestamp)
+				if (timestamptz_cmp_internal(currentTimestamp, youngestTimestamp) == 1)
 				{
 					youngestTransaction = currentNode;
 				}
