@@ -24,6 +24,8 @@
 #include "utils/hsearch.h"
 #include "utils/timestamp.h"
 
+/* GUC, determining whether debug messages for deadlock detection sent to LOG */
+bool LogDistributedDeadlockDetection = false;
 
 static bool CheckDeadlockForTransactionNode(TransactionNode *startingTransactionNode,
 											List **deadlockPath);
@@ -40,6 +42,10 @@ static uint32 DistributedTransactionIdHash(const void *key, Size keysize);
 static int DistributedTransactionIdCompareHash(const void *a, const void *b, Size
 											   keysize);
 static int DistributedTransactionIdCompare(const void *a, const void *b);
+static void LogKillingBackend(TransactionNode *transactionNode);
+static void LogTransactionNode(TransactionNode *transactionNode);
+static void LogAdjacencyLists(HTAB *adjacencyLists);
+static void LogDistributedDeadlockDebugMessage(const char *errorMessage);
 
 
 PG_FUNCTION_INFO_V1(check_distributed_deadlocks);
@@ -83,6 +89,9 @@ CheckForDistributedDeadlocks(void)
 	HASH_SEQ_STATUS status;
 	TransactionNode *transactionNode = NULL;
 
+	LogDistributedDeadlockDebugMessage("Distributed deadlock detection starts");
+	LogAdjacencyLists(adjacencyLists);
+
 	/*
 	 * We iterate on transaction nodes and search for deadlocks where the
 	 * starting node is the given transaction node.
@@ -110,6 +119,9 @@ CheckForDistributedDeadlocks(void)
 			/* there should be at least two transactions to get into a deadlock */
 			Assert(list_length(deadlockPath) > 1);
 
+			LogDistributedDeadlockDebugMessage("Distributed deadlock found among the "
+											   "following distributed transactions:");
+
 			/*
 			 * We search for the youngest participant for two reasons
 			 * (i) predictable results (ii) kill the youngest transaction
@@ -125,6 +137,7 @@ CheckForDistributedDeadlocks(void)
 					youngestTransaction->transactionId.timestamp;
 				TimestampTz currentTimestamp = currentNode->transactionId.timestamp;
 
+				LogTransactionNode(currentNode);
 
 				AssocateDistributedTransactionWithBackendProc(currentNode);
 
@@ -138,12 +151,15 @@ CheckForDistributedDeadlocks(void)
 			Assert(youngestTransaction->initiatorProc != NULL);
 
 			KillBackendDueToDeadlock(youngestTransaction->initiatorProc);
+			LogKillingBackend(youngestTransaction);
 
 			hash_seq_term(&status);
 
 			return true;
 		}
 	}
+
+	LogDistributedDeadlockDebugMessage("No distributed deadlocks found");
 
 	return false;
 }
@@ -161,7 +177,7 @@ static bool
 CheckDeadlockForTransactionNode(TransactionNode *startingTransactionNode,
 								List **deadlockPath)
 {
-	List *waitingTransactionNodes = startingTransactionNode->waitsFor;
+	List *waitingTransactionNodes = list_copy(startingTransactionNode->waitsFor);
 
 	/* traverse the graph */
 	while (waitingTransactionNodes != NIL)
@@ -510,4 +526,154 @@ DistributedTransactionIdCompare(const void *a, const void *b)
 	{
 		return 0;
 	}
+}
+
+
+/*
+ * Iterates over the given adjacency lists and sends them to the logs via
+ * LogDistributedDeadlockDebugMessage().
+ */
+static void
+LogAdjacencyLists(HTAB *adjacencyLists)
+{
+	HASH_SEQ_STATUS debugStatus;
+	TransactionNode *transactionNode = NULL;
+	int processedEntryCount = 0;
+
+	if (!LogDistributedDeadlockDetection)
+	{
+		return;
+	}
+
+
+	/* iterate on all nodes */
+	hash_seq_init(&debugStatus, adjacencyLists);
+
+	while ((transactionNode = (TransactionNode *) hash_seq_search(&debugStatus)) != 0)
+	{
+		++processedEntryCount;
+		if (processedEntryCount == 1)
+		{
+			LogDistributedDeadlockDebugMessage(
+				"----------Adjacency lists starts----------");
+		}
+
+		LogTransactionNode(transactionNode);
+	}
+
+	if (processedEntryCount != 0)
+	{
+		LogDistributedDeadlockDebugMessage("----------Adjacency lists ends----------");
+	}
+	else
+	{
+		LogDistributedDeadlockDebugMessage("No dependencies exist among distributed "
+										   "transactions");
+	}
+}
+
+
+/*
+ * LogKillingBackend should only be called when a distributed transaction's
+ * backend is killed due to distributed deadlocks. It sends which transaction
+ * is killed and its corresponding pid.
+ */
+static
+void
+LogKillingBackend(TransactionNode *transactionNode)
+{
+	StringInfo logMessage = NULL;
+
+	if (!LogDistributedDeadlockDetection)
+	{
+		return;
+	}
+
+	logMessage = makeStringInfo();
+
+	appendStringInfo(logMessage, "Killing the following backend "
+								 "to resolve distributed deadlock "
+								 "(transaction numner = %ld, pid = %d)",
+					 transactionNode->transactionId.transactionNumber,
+					 transactionNode->initiatorProc->pid);
+
+	LogDistributedDeadlockDebugMessage(logMessage->data);
+}
+
+
+/*
+ * LogTransactionNode converts the transaction node to a human readable form
+ * and sends to the logs via LogDistributedDeadlockDebugMessage().
+ */
+static void
+LogTransactionNode(TransactionNode *transactionNode)
+{
+	StringInfo logMessage = NULL;
+
+	DistributedTransactionId *transactionId = NULL;
+
+	if (!LogDistributedDeadlockDetection)
+	{
+		return;
+	}
+
+	logMessage = makeStringInfo();
+	transactionId = &(transactionNode->transactionId);
+
+	appendStringInfo(logMessage, "[DistributedTransactionId: (%d, %ld, %s)] = ",
+					 transactionId->initiatorNodeIdentifier,
+					 transactionId->transactionNumber,
+					 timestamptz_to_str(transactionId->timestamp));
+
+	appendStringInfo(logMessage, "[WaitsFor transaction numbers: %s]",
+					 WaitsForToString(transactionNode->waitsFor));
+
+
+	LogDistributedDeadlockDebugMessage(logMessage->data);
+}
+
+
+/*
+ * LogDistributedDeadlockDebugMessage checks EnableDistributedDeadlockDebugging flag. If
+ * it is true, the input message is sent to the logs with LOG level. Also, current timestamp
+ * is prepanded to the message.
+ */
+static void
+LogDistributedDeadlockDebugMessage(const char *errorMessage)
+{
+	if (!LogDistributedDeadlockDetection)
+	{
+		return;
+	}
+
+	ereport(LOG, (errmsg("[%s] %s", timestamptz_to_str(GetCurrentTimestamp()),
+						 errorMessage)));
+}
+
+
+/*
+ * WaitsForToString is only intended for testing and debugging. It gets a
+ * waitsForList and returns the list of transaction nodes' transactionNumber
+ * in a string.
+ */
+char *
+WaitsForToString(List *waitsFor)
+{
+	StringInfo transactionIdStr = makeStringInfo();
+	ListCell *waitsForCell = NULL;
+
+	foreach(waitsForCell, waitsFor)
+	{
+		TransactionNode *waitingNode = (TransactionNode *) lfirst(waitsForCell);
+
+		if (transactionIdStr->len != 0)
+		{
+			appendStringInfoString(transactionIdStr, ",");
+		}
+
+		appendStringInfo(transactionIdStr, "%ld",
+						 waitingNode->transactionId.transactionNumber);
+	}
+
+	return transactionIdStr->data;
 }

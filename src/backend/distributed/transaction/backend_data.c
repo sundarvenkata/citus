@@ -18,6 +18,7 @@
 #include "catalog/pg_type.h"
 #include "datatype/timestamp.h"
 #include "distributed/backend_data.h"
+#include "distributed/distributed_deadlock_detection.h"
 #include "distributed/listutils.h"
 #include "distributed/metadata_cache.h"
 #include "distributed/transaction_identifier.h"

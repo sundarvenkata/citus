@@ -33,8 +33,13 @@ typedef struct TransactionNode
 	bool transactionVisited;
 } TransactionNode;
 
+/* GUC, determining whether debug messages for deadlock detection sent to LOG */
+extern bool LogDistributedDeadlockDetection;
+
+
 extern bool CheckForDistributedDeadlocks(void);
 extern HTAB * BuildAdjacencyListsForWaitGraph(WaitGraph *waitGraph);
+extern char * WaitsForToString(List *waitsFor);
 
 
 #endif /* DISTRIBUTED_DEADLOCK_DETECTION_H */
