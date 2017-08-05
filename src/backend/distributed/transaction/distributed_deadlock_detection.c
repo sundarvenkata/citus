@@ -27,10 +27,9 @@
 
 static bool CheckDeadlockForTransactionNode(TransactionNode *startingTransactionNode,
 											List **deadlockPath);
-static bool CheckDeadlockForTransactionNodeRecurse(TransactionNode *
-												   startingTransactionNode,
-												   List *waitingTransactionNodes,
-												   List **deadlockPath);
+static void FindDeadlockPath(List *waitingTransactionList, List **deadlockPath);
+static void RemoveElementsUntilTransactionNodeFound(List *waitingTransactionList,
+													TransactionNode *transactionNode);
 static void ResetVisitedFields(HTAB *adjacencyList);
 static void AssocateDistributedTransactionWithBackendProc(TransactionNode *
 														  transactionNode);
@@ -147,50 +146,35 @@ CheckForDistributedDeadlocks(void)
 
 
 /*
- * CheckDeadlockForTransactionNode traverses the graph by a DFS,
- * starting with the given node. The function checks for a cycle
- * (i.e., the given node can be reached again while traversing the graph).
+ * CheckDeadlockForDistributedTransaction does a DFS starting with the given
+ * transaction node and checks for a cycle (i.e., the node can be reached again
+ * while traversing the graph).
  *
- * Finding a cycle indicates a distributed deadlock and the function returns
- * true on that case. Also, once a deadlock found, all the participant
- * transactions are provided to the caller via the deadlockPath list.
+ * Finding a cycle  indicates a distributed deadlock and the function returns
+ * true on that case.
  */
-static
-bool
+static bool
 CheckDeadlockForTransactionNode(TransactionNode *startingTransactionNode,
 								List **deadlockPath)
 {
-	/* the starting node is in the deadlock path by default if a transaction found */
-	*deadlockPath = list_make1(startingTransactionNode);
+	List *waitingTransactionNodes = startingTransactionNode->waitsFor;
 
-	return CheckDeadlockForTransactionNodeRecurse(startingTransactionNode,
-												  startingTransactionNode->waitsFor,
-												  deadlockPath);
-}
-
-
-/*
- * CheckDeadlockForTransactionNodeRecurse is the workhorse for doing the DFS.
- * The function recursively walks over the waiting transaction nodes and
- * keeps track of the transactions that are part of the deadlock by updating
- * the deadlockPath list. The deadLockPath is only valid if a deadlock found.
- */
-static
-bool
-CheckDeadlockForTransactionNodeRecurse(TransactionNode *startingTransactionNode,
-									   List *waitingTransactionNodes,
-									   List **deadlockPath)
-{
+	/* traverse the graph */
 	while (waitingTransactionNodes != NIL)
 	{
 		TransactionNode *waitingTransactionNode =
 			(TransactionNode *) linitial(waitingTransactionNodes);
+		ListCell *currentWaitForCell = NULL;
 
-		/* add the transaction which is being processed to the deadlock path */
-		*deadlockPath = lcons(waitingTransactionNode, *deadlockPath);
+		waitingTransactionNodes = list_delete_first(waitingTransactionNodes);
 
+		/* cycle found, let the caller know about the cycle */
 		if (waitingTransactionNode == startingTransactionNode)
 		{
+			*deadlockPath = list_make1(waitingTransactionNode);
+
+			FindDeadlockPath(waitingTransactionNodes, deadlockPath);
+
 			return true;
 		}
 
@@ -202,21 +186,83 @@ CheckDeadlockForTransactionNodeRecurse(TransactionNode *startingTransactionNode,
 
 		waitingTransactionNode->transactionVisited = true;
 
-		if (CheckDeadlockForTransactionNodeRecurse(startingTransactionNode,
-												   waitingTransactionNode->waitsFor,
-												   deadlockPath))
+		/* prepend to the list to continue depth-first search */
+		foreach(currentWaitForCell, waitingTransactionNode->waitsFor)
 		{
-			return true;
-		}
+			TransactionNode *waitForTransaction = (TransactionNode *) lfirst(
+				currentWaitForCell);
 
-		/* we haven't found any deadlocks using this path */
-		*deadlockPath = list_delete_first(*deadlockPath);
+			/*
+			 * We add both the waiting node and its waiter to simplify finding the
+			 * deadlock path.
+			 */
+			waitingTransactionNodes =
+				lcons(waitingTransactionNode, waitingTransactionNodes);
+			waitingTransactionNodes = lcons(waitForTransaction, waitingTransactionNodes);
+		}
 	}
 
-	/* no deadlocks found */
-	*deadlockPath = NIL;
-
 	return false;
+}
+
+
+/*
+ * FindDeadlockPath gets a waitingTransactionList which involves a deadlock
+ * (i.e., cycle in the graph) and fills the deadlockPath by backtracing on
+ * the waiting list.
+ *
+ * The function iterates over the waiting list, adds the element to the
+ * deadlock path and removes all other branches that starts with the
+ * given node on the waiting graph.
+ */
+static void
+FindDeadlockPath(List *waitingTransactionList, List **deadlockPath)
+{
+	while (waitingTransactionList != NIL)
+	{
+		TransactionNode *waitingTransaction = linitial(waitingTransactionList);
+
+		*deadlockPath = lappend(*deadlockPath, waitingTransaction);
+
+		waitingTransactionList = list_delete_first(waitingTransactionList);
+		RemoveElementsUntilTransactionNodeFound(waitingTransactionList,
+												waitingTransaction);
+	}
+}
+
+
+/*
+ * RemoveElementsUntilTransactionNodeFound gets a transaction list and a
+ * transactionNode. The function iterates on the list and removes all the
+ * nodes until the transactionNode is found. There could be more than one
+ * transactionNodes and the function removes all of the paths that reaches
+ * the given transactionNode.
+ */
+static void
+RemoveElementsUntilTransactionNodeFound(List *waitingTransactionList,
+										TransactionNode *transactionNode)
+{
+	int toBeDeletedNodeCount = 0;
+	int nodeIndex = 0;
+
+	while (waitingTransactionList != NIL)
+	{
+		TransactionNode *waitingTransaction = linitial(waitingTransactionList);
+
+		++toBeDeletedNodeCount;
+
+		if (waitingTransaction->transactionId.transactionNumber ==
+			transactionNode->transactionId.transactionNumber)
+		{
+			for (nodeIndex = 0; nodeIndex < toBeDeletedNodeCount; ++nodeIndex)
+			{
+				waitingTransactionList = list_delete_first(waitingTransactionList);
+			}
+
+			/* we'll search other occurences of the transactionNode */
+			toBeDeletedNodeCount = 0;
+		}
+	}
 }
 
 
