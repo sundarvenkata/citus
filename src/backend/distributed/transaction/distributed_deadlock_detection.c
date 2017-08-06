@@ -10,7 +10,9 @@
  */
 
 #include "postgres.h"
+
 #include "miscadmin.h"
+#include "pgstat.h"
 
 #include "access/hash.h"
 #include "distributed/backend_data.h"
@@ -30,8 +32,8 @@ bool LogDistributedDeadlockDetection = false;
 static bool CheckDeadlockForTransactionNode(TransactionNode *startingTransactionNode,
 											List **deadlockPath);
 static void FindDeadlockPath(List *waitingTransactionList, List **deadlockPath);
-static void RemoveElementsUntilTransactionNodeFound(List *waitingTransactionList,
-													TransactionNode *transactionNode);
+static List * RemoveElementsUntilTransactionNodeFound(List *waitingTransactionList,
+													  TransactionNode *transactionNode);
 static void ResetVisitedFields(HTAB *adjacencyList);
 static void AssocateDistributedTransactionWithBackendProc(TransactionNode *
 														  transactionNode);
@@ -133,13 +135,19 @@ CheckForDistributedDeadlocks(void)
 				TransactionNode *currentNode =
 					(TransactionNode *) lfirst(participantTransactionCell);
 
+				const char *backendQuery = NULL;
+
 				TimestampTz youngestTimestamp =
 					youngestTransaction->transactionId.timestamp;
 				TimestampTz currentTimestamp = currentNode->transactionId.timestamp;
 
+				AssocateDistributedTransactionWithBackendProc(currentNode);
+
 				LogTransactionNode(currentNode);
 
-				AssocateDistributedTransactionWithBackendProc(currentNode);
+				backendQuery = pgstat_get_backend_current_activity(
+					currentNode->initiatorProc->pid, false);
+				LogDistributedDeadlockDebugMessage(backendQuery);
 
 				if (timestamptz_cmp_internal(currentTimestamp, youngestTimestamp) == 1)
 				{
@@ -245,8 +253,10 @@ FindDeadlockPath(List *waitingTransactionList, List **deadlockPath)
 		*deadlockPath = lappend(*deadlockPath, waitingTransaction);
 
 		waitingTransactionList = list_delete_first(waitingTransactionList);
-		RemoveElementsUntilTransactionNodeFound(waitingTransactionList,
-												waitingTransaction);
+
+		waitingTransactionList = RemoveElementsUntilTransactionNodeFound(
+			waitingTransactionList,
+			waitingTransaction);
 	}
 }
 
@@ -257,31 +267,38 @@ FindDeadlockPath(List *waitingTransactionList, List **deadlockPath)
  * nodes until the transactionNode is found. There could be more than one
  * transactionNodes and the function removes all of the paths that reaches
  * the given transactionNode.
+ *
+ * TODO: update comment
  */
-static void
+static List *
 RemoveElementsUntilTransactionNodeFound(List *waitingTransactionList,
 										TransactionNode *transactionNode)
 {
-	int toBeDeletedNodeCount = 0;
+	int toBeDeletedNodeIndex = 0;
 	int nodeIndex = 0;
+	ListCell *waitingTransactionCell = NULL;
 
-	while (waitingTransactionList != NIL)
+	foreach(waitingTransactionCell, waitingTransactionList)
 	{
-		TransactionNode *waitingTransaction = linitial(waitingTransactionList);
+		TransactionNode *waitingTransaction =
+			(TransactionNode *) lfirst(waitingTransactionCell);
 
-		++toBeDeletedNodeCount;
-
+		nodeIndex++;
 		if (waitingTransaction->transactionId.transactionNumber ==
 			transactionNode->transactionId.transactionNumber)
 		{
-			for (nodeIndex = 0; nodeIndex < toBeDeletedNodeCount; ++nodeIndex)
-			{
-				waitingTransactionList = list_delete_first(waitingTransactionList);
-			}
-
-			/* we'll search other occurences of the transactionNode */
-			toBeDeletedNodeCount = 0;
+			toBeDeletedNodeIndex = nodeIndex;
 		}
+	}
+
+
+	if (toBeDeletedNodeIndex == 0)
+	{
+		return waitingTransactionList;
+	}
+	else
+	{
+		return list_copy_tail(waitingTransactionList, toBeDeletedNodeIndex);
 	}
 }
 
