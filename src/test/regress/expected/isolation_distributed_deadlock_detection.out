@@ -358,7 +358,7 @@ restore_isolation_tester_func
 
                
 
-starting permutation: s1-begin s2-begin s3-begin s4-begin s5-begin s6-begin s6-update-6 s5-update-5 s5-update-6 s4-update-4 s1-update-4 s4-update-5 s2-update-3 s3-update-2 s2-update-2 s3-update-3 s6-finish s5-finish s4-finish s1-finish s2-finish s3-finish
+starting permutation: s1-begin s2-begin s3-begin s4-begin s5-begin s6-begin s6-update-6 s5-update-5 s5-update-6 s4-update-4 s1-update-4 s4-update-5 s2-update-3 s3-update-2 s2-update-2 s3-update-3 s6-finish s5-finish s4-finish s1-finish s3-finish s2-finish
 step s1-begin: 
   BEGIN;
 
@@ -422,13 +422,13 @@ step s1-update-4: <... completed>
 step s1-finish: 
   COMMIT;
 
-step s2-update-2: <... completed>
 step s3-update-3: <... completed>
-error in steps s2-update-2 s3-update-3: ERROR:  distributed deadlock detected and to resolve the deadlock this backend is cancelled
-step s2-finish: 
+step s2-update-2: <... completed>
+error in steps s3-update-3 s2-update-2: ERROR:  distributed deadlock detected and to resolve the deadlock this backend is cancelled
+step s3-finish: 
   COMMIT;
 
-step s3-finish: 
+step s2-finish: 
   COMMIT;
 
 restore_isolation_tester_func
