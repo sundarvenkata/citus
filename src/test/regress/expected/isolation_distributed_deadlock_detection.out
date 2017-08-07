@@ -402,7 +402,7 @@ restore_isolation_tester_func
 
                
 
-starting permutation: s1-set-deadlock-prevention s2-set-deadlock-prevention s3-set-deadlock-prevention s4-set-deadlock-prevention s5-set-deadlock-prevention s6-set-deadlock-prevention s1-begin s2-begin s3-begin s4-begin s5-begin s6-begin s1-update-1 s5-update-5 s3-update-2 s2-update-3 s4-update-4 s3-update-4 s6-update-6 s4-update-6 s6-update-7 s1-update-5 s5-update-1 s5-finish s1-finish s4-finish s3-finish s6-finish s2-finish
+starting permutation: s1-set-deadlock-prevention s2-set-deadlock-prevention s3-set-deadlock-prevention s4-set-deadlock-prevention s5-set-deadlock-prevention s6-set-deadlock-prevention s1-begin s2-begin s3-begin s4-begin s5-begin s6-begin s1-update-1 s5-update-5 s3-update-2 s2-update-3 s4-update-4 s3-update-4 s6-update-6 s4-update-6 s1-update-5 s5-update-1 s5-finish s1-finish s6-finish s4-finish s3-finish s2-finish
 step s1-set-deadlock-prevention: 
 	SET citus.enable_deadlock_prevention TO off;
 	
@@ -481,9 +481,6 @@ step s6-update-6:
 step s4-update-6: 
   UPDATE deadlock_detection_test SET some_val = 4 WHERE user_id = 6;
  <waiting ...>
-step s6-update-7: 
-  UPDATE deadlock_detection_test SET some_val = 6 WHERE user_id = 7;
- <waiting ...>
 step s1-update-5: 
   UPDATE deadlock_detection_test SET some_val = 1 WHERE user_id = 5;
  <waiting ...>
@@ -491,25 +488,23 @@ step s5-update-1:
   UPDATE deadlock_detection_test SET some_val = 5 WHERE user_id = 1;
  <waiting ...>
 step s5-update-1: <... completed>
-step s4-update-6: <... completed>
-step s6-update-7: <... completed>
 step s1-update-5: <... completed>
-error in steps s5-update-1 s4-update-6 s6-update-7 s1-update-5: ERROR:  canceling statement due to user request
-error in steps s5-update-1 s4-update-6 s6-update-7 s1-update-5: ERROR:  canceling statement due to user request
+error in steps s5-update-1 s1-update-5: ERROR:  canceling statement due to user request
 step s5-finish: 
   COMMIT;
 
 step s1-finish: 
   COMMIT;
 
+step s6-finish: 
+  COMMIT;
+
+step s4-update-6: <... completed>
 step s4-finish: 
   COMMIT;
 
 step s3-update-4: <... completed>
 step s3-finish: 
-  COMMIT;
-
-step s6-finish: 
   COMMIT;
 
 step s2-finish: 
@@ -632,7 +627,7 @@ restore_isolation_tester_func
 
                
 
-starting permutation: s1-set-deadlock-prevention s2-set-deadlock-prevention s3-set-deadlock-prevention s4-set-deadlock-prevention s5-set-deadlock-prevention s6-set-deadlock-prevention s1-begin s2-begin s3-begin s4-begin s5-begin s6-begin s5-update-5 s3-update-2 s2-update-2 s6-update-6 s4-update-4 s3-update-4 s4-update-5 s1-update-4 s6-update-6 s5-update-6 s6-update-5 s6-finish s5-finish s4-finish s3-finish s1-finish s2-finish
+starting permutation: s1-set-deadlock-prevention s2-set-deadlock-prevention s3-set-deadlock-prevention s4-set-deadlock-prevention s5-set-deadlock-prevention s6-set-deadlock-prevention s1-begin s2-begin s3-begin s4-begin s5-begin s6-begin s5-update-5 s3-update-2 s2-update-2 s4-update-4 s3-update-4 s4-update-5 s1-update-4 s6-update-6 s5-update-6 s6-update-5 s6-finish s5-finish s4-finish s3-finish s1-finish s2-finish
 step s1-set-deadlock-prevention: 
 	SET citus.enable_deadlock_prevention TO off;
 	
@@ -696,9 +691,6 @@ step s3-update-2:
 step s2-update-2: 
   UPDATE deadlock_detection_test SET some_val = 2 WHERE user_id = 2;
  <waiting ...>
-step s6-update-6: 
-  UPDATE deadlock_detection_test SET some_val = 6 WHERE user_id = 6;
-
 step s4-update-4: 
   UPDATE deadlock_detection_test SET some_val = 4 WHERE user_id = 4;
 
@@ -721,20 +713,19 @@ step s6-update-5:
   UPDATE deadlock_detection_test SET some_val = 6 WHERE user_id = 5;
  <waiting ...>
 step s6-update-5: <... completed>
-step s3-update-4: <... completed>
-step s4-update-5: <... completed>
 step s5-update-6: <... completed>
-error in steps s6-update-5 s3-update-4 s4-update-5 s5-update-6: ERROR:  canceling statement due to user request
-error in steps s6-update-5 s3-update-4 s4-update-5 s5-update-6: ERROR:  canceling statement due to user request
+error in steps s6-update-5 s5-update-6: ERROR:  canceling statement due to user request
 step s6-finish: 
   COMMIT;
 
 step s5-finish: 
   COMMIT;
 
+step s4-update-5: <... completed>
 step s4-finish: 
   COMMIT;
 
+step s3-update-4: <... completed>
 step s3-finish: 
   COMMIT;
 
