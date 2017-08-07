@@ -13,13 +13,6 @@ setup
   INSERT INTO deadlock_detection_test VALUES (5,5);
   INSERT INTO deadlock_detection_test VALUES (6,6);
   INSERT INTO deadlock_detection_test VALUES (7,7);
-
-    CREATE OR REPLACE FUNCTION get_adjacency_list_wait_graph(OUT transactionNumber int, OUT waitingTransactionNumbers cstring)
-    RETURNS SETOF RECORD
-    LANGUAGE C STRICT
-    AS 'citus', $$get_adjacency_list_wait_graph$$;
-    COMMENT ON FUNCTION get_adjacency_list_wait_graph(OUT transactionNumber int, OUT waitingTransactionNumbers cstring)
-    IS 'returns flattened wait graph';
 }
 
 teardown
