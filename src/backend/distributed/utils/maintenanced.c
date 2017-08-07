@@ -257,6 +257,7 @@ CitusMaintenanceDaemonMain(Datum main_arg)
 		bool foundDeadlock = false;
 
 		CHECK_FOR_INTERRUPTS();
+
 		/*
 		 * Perform Work.  If a specific task needs to be called sooner than
 		 * timeout indicates, it's ok to lower it to that value.  Expensive
@@ -274,7 +275,7 @@ CitusMaintenanceDaemonMain(Datum main_arg)
 		}
 		else
 		{
-			 timeout = DistributedDeadlockDetectionTimeoutFactor * DeadlockTimeout;
+			timeout = DistributedDeadlockDetectionTimeoutFactor * DeadlockTimeout;
 		}
 
 		StartTransactionCommand();

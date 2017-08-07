@@ -796,6 +796,7 @@ WarningForDeadlockTimeout(double newval, void *extra)
 	}
 }
 
+
 /*
  * NormalizeWorkerListPath converts the path configured via
  * citus.worker_list_file into an absolute path, falling back to the default
