@@ -23,14 +23,6 @@ teardown
 
 session "s1"
 
-step "s1-set-deadlock-prevention"
-{
-	SET citus.enable_deadlock_prevention TO off;
-	
-    -- we don't want Postgres deadlock detection to kick in
-    SET deadlock_timeout TO '20min';
-}
-
 step "s1-begin"
 {
   BEGIN;
@@ -68,14 +60,6 @@ step "s1-finish"
 
 session "s2"
 
-step "s2-set-deadlock-prevention"
-{
-	SET citus.enable_deadlock_prevention TO off;
-
-    -- we don't want Postgres deadlock detection to kick in
-    SET deadlock_timeout TO '20min';
-}
-
 step "s2-begin"
 {
   BEGIN;
@@ -102,14 +86,6 @@ step "s2-finish"
 }
 
 session "s3"
-
-step "s3-set-deadlock-prevention"
-{
-	SET citus.enable_deadlock_prevention TO off;
-
-    -- we don't want Postgres deadlock detection to kick in
-    SET deadlock_timeout TO '20min';
-}
 
 step "s3-begin"
 {
@@ -142,14 +118,6 @@ step "s3-finish"
 }
 
 session "s4"
-
-step "s4-set-deadlock-prevention"
-{
-	SET citus.enable_deadlock_prevention TO off;
-
-    -- we don't want Postgres deadlock detection to kick in
-    SET deadlock_timeout TO '20min';
-}
 
 step "s4-begin"
 {
@@ -198,14 +166,6 @@ step "s4-finish"
 
 session "s5"
 
-step "s5-set-deadlock-prevention"
-{
-	SET citus.enable_deadlock_prevention TO off;
-
-    -- we don't want Postgres deadlock detection to kick in
-    SET deadlock_timeout TO '20min';
-}
-
 step "s5-begin"
 {
   BEGIN;
@@ -253,14 +213,6 @@ step "s5-finish"
 
 session "s6"
 
-step "s6-set-deadlock-prevention"
-{
-	SET citus.enable_deadlock_prevention TO off;
-
-    -- we don't want Postgres deadlock detection to kick in
-    SET deadlock_timeout TO '20min';
-}
-
 step "s6-begin"
 {
   BEGIN;
@@ -307,29 +259,29 @@ step "s6-finish"
 }
 
 # simplest case, loop with two nodes
-permutation "s1-set-deadlock-prevention" "s2-set-deadlock-prevention" "s1-begin" "s2-begin" "s1-update-1" "s2-update-2" "s2-update-1" "s1-update-2" "s1-finish" "s2-finish"
+permutation "s1-begin" "s2-begin" "s1-update-1" "s2-update-2" "s2-update-1" "s1-update-2" "s1-finish" "s2-finish"
 
 # slightly more complex case, loop with three nodes
-permutation "s1-set-deadlock-prevention" "s2-set-deadlock-prevention" "s3-set-deadlock-prevention" "s1-begin" "s2-begin" "s3-begin"  "s1-update-1" "s2-update-2" "s3-update-3" "s1-update-2" "s2-update-3" "s3-update-1" "s3-finish" "s2-finish" "s1-finish"
+permutation "s1-begin" "s2-begin" "s3-begin"  "s1-update-1" "s2-update-2" "s3-update-3" "s1-update-2" "s2-update-3" "s3-update-1" "s3-finish" "s2-finish" "s1-finish"
 
 # similar to the above (i.e., 3 nodes), but the cycle starts from the second node 
-permutation "s1-set-deadlock-prevention" "s2-set-deadlock-prevention" "s3-set-deadlock-prevention" "s1-begin" "s2-begin" "s3-begin"  "s2-update-1" "s1-update-1" "s2-update-2" "s3-update-3" "s3-update-2" "s2-update-3" "s3-finish" "s2-finish" "s1-finish"
+permutation "s1-begin" "s2-begin" "s3-begin"  "s2-update-1" "s1-update-1" "s2-update-2" "s3-update-3" "s3-update-2" "s2-update-3" "s3-finish" "s2-finish" "s1-finish"
 
 # not connected graph
-permutation "s1-set-deadlock-prevention" "s2-set-deadlock-prevention" "s3-set-deadlock-prevention" "s4-set-deadlock-prevention" "s1-begin" "s2-begin" "s3-begin" "s4-begin" "s1-update-1" "s2-update-2" "s3-update-3" "s3-update-2" "s4-update-4" "s2-update-3" "s3-finish" "s2-finish" "s1-finish" "s4-finish"
+permutation "s1-begin" "s2-begin" "s3-begin" "s4-begin" "s1-update-1" "s2-update-2" "s3-update-3" "s3-update-2" "s4-update-4" "s2-update-3" "s3-finish" "s2-finish" "s1-finish" "s4-finish"
 
 # still a not connected graph, but each smaller graph contains dependencies, one of which is a distributed deadlock
-permutation "s1-set-deadlock-prevention" "s2-set-deadlock-prevention" "s3-set-deadlock-prevention" "s4-set-deadlock-prevention" "s1-begin" "s2-begin" "s3-begin" "s4-begin" "s4-update-1" "s1-update-1" "s2-update-2" "s3-update-3" "s2-update-3" "s3-update-2" "s3-finish" "s2-finish" "s4-finish" "s1-finish"
+permutation "s1-begin" "s2-begin" "s3-begin" "s4-begin" "s4-update-1" "s1-update-1" "s2-update-2" "s3-update-3" "s2-update-3" "s3-update-2" "s3-finish" "s2-finish" "s4-finish" "s1-finish"
 
 #  multiple deadlocks on a not connected graph
-permutation "s1-set-deadlock-prevention" "s2-set-deadlock-prevention" "s3-set-deadlock-prevention" "s4-set-deadlock-prevention" "s1-begin" "s2-begin" "s3-begin" "s4-begin" "s1-update-1" "s4-update-4" "s2-update-2" "s3-update-3" "s3-update-2" "s4-update-1" "s1-update-4" "s1-finish" "s4-finish" "s2-update-3"  "s2-finish" "s3-finish" 
+permutation "s1-begin" "s2-begin" "s3-begin" "s4-begin" "s1-update-1" "s4-update-4" "s2-update-2" "s3-update-3" "s3-update-2" "s4-update-1" "s1-update-4" "s1-finish" "s4-finish" "s2-update-3"  "s2-finish" "s3-finish" 
 
 # a larger graph where the first node is in the distributed deadlock
-permutation "s1-set-deadlock-prevention" "s2-set-deadlock-prevention" "s3-set-deadlock-prevention" "s4-set-deadlock-prevention"  "s5-set-deadlock-prevention" "s6-set-deadlock-prevention" "s1-begin" "s2-begin" "s3-begin" "s4-begin" "s5-begin" "s6-begin" "s1-update-1" "s5-update-5" "s3-update-2" "s2-update-3" "s4-update-4" "s3-update-4" "s6-update-6" "s4-update-6" "s1-update-5" "s5-update-1" "s5-finish" "s1-finish" "s6-finish" "s4-finish" "s3-finish" "s2-finish"
+permutation "s1-begin" "s2-begin" "s3-begin" "s4-begin" "s5-begin" "s6-begin" "s1-update-1" "s5-update-5" "s3-update-2" "s2-update-3" "s4-update-4" "s3-update-4" "s6-update-6" "s4-update-6" "s1-update-5" "s5-update-1" "s5-finish" "s1-finish" "s6-finish" "s4-finish" "s3-finish" "s2-finish"
  
 # a larger graph where the deadlock starts from a middle node
-permutation "s1-set-deadlock-prevention" "s2-set-deadlock-prevention" "s3-set-deadlock-prevention" "s4-set-deadlock-prevention"  "s5-set-deadlock-prevention" "s6-set-deadlock-prevention" "s1-begin" "s2-begin" "s3-begin" "s4-begin" "s5-begin" "s6-begin" "s6-update-6" "s5-update-5" "s5-update-6" "s4-update-4" "s1-update-4" "s4-update-5" "s2-update-3" "s3-update-2" "s2-update-2" "s3-update-3" "s6-finish" "s5-finish" "s4-finish" "s1-finish" "s2-finish" "s3-finish"
+permutation "s1-begin" "s2-begin" "s3-begin" "s4-begin" "s5-begin" "s6-begin" "s6-update-6" "s5-update-5" "s5-update-6" "s4-update-4" "s1-update-4" "s4-update-5" "s2-update-3" "s3-update-2" "s2-update-2" "s3-update-3" "s6-finish" "s5-finish" "s4-finish" "s1-finish" "s2-finish" "s3-finish"
 
 # a larger graph where the deadlock starts from the last node
-permutation "s1-set-deadlock-prevention" "s2-set-deadlock-prevention" "s3-set-deadlock-prevention" "s4-set-deadlock-prevention"  "s5-set-deadlock-prevention" "s6-set-deadlock-prevention" "s1-begin" "s2-begin" "s3-begin" "s4-begin" "s5-begin" "s6-begin" "s5-update-5" "s3-update-2" "s2-update-2" "s4-update-4" "s3-update-4" "s4-update-5" "s1-update-4" "s6-update-6" "s5-update-6" "s6-update-5" "s6-finish" "s5-finish" "s4-finish" "s3-finish"  "s1-finish" "s2-finish"
+permutation "s1-begin" "s2-begin" "s3-begin" "s4-begin" "s5-begin" "s6-begin" "s5-update-5" "s3-update-2" "s2-update-2" "s4-update-4" "s3-update-4" "s4-update-5" "s1-update-4" "s6-update-6" "s5-update-6" "s6-update-5" "s6-finish" "s5-finish" "s4-finish" "s3-finish"  "s1-finish" "s2-finish"
 

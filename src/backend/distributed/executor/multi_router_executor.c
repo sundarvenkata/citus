@@ -70,6 +70,8 @@
 
 /* controls use of locks to enforce safe commutativity */
 bool AllModificationsCommutative = false;
+
+/* we've deprecated this flag, keeping here for some time not to break existing users */
 bool EnableDeadlockPrevention = true;
 
 /* functions needed during run phase */
@@ -904,8 +906,7 @@ GetModifyConnections(Task *task, bool markCritical, bool noNewTransactions)
 		{
 			RemoteTransaction *transaction = &multiConnection->remoteTransaction;
 
-			if (EnableDeadlockPrevention &&
-				transaction->transactionState == REMOTE_TRANS_INVALID)
+			if (transaction->transactionState == REMOTE_TRANS_INVALID)
 			{
 				ereport(ERROR, (errcode(ERRCODE_CONNECTION_DOES_NOT_EXIST),
 								errmsg("no transaction participant matches %s:%d",
