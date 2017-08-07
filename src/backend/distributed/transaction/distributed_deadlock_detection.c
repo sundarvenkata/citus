@@ -32,8 +32,8 @@ bool LogDistributedDeadlockDetection = false;
 static bool CheckDeadlockForTransactionNode(TransactionNode *startingTransactionNode,
 											List **deadlockPath);
 static void FindDeadlockPath(List *waitingTransactionList, List **deadlockPath);
-static List * RemoveElementsUntilTransactionNodeFound(List *waitingTransactionList,
-													  TransactionNode *transactionNode);
+static List * RemoveElementsUptoNode(List *waitingTransactionList,
+									 TransactionNode *transactionNode);
 static void ResetVisitedFields(HTAB *adjacencyList);
 static void AssocateDistributedTransactionWithBackendProc(TransactionNode *
 														  transactionNode);
@@ -135,8 +135,6 @@ CheckForDistributedDeadlocks(void)
 				TransactionNode *currentNode =
 					(TransactionNode *) lfirst(participantTransactionCell);
 
-				const char *backendQuery = NULL;
-
 				TimestampTz youngestTimestamp =
 					youngestTransaction->transactionId.timestamp;
 				TimestampTz currentTimestamp = currentNode->transactionId.timestamp;
@@ -144,10 +142,6 @@ CheckForDistributedDeadlocks(void)
 				AssocateDistributedTransactionWithBackendProc(currentNode);
 
 				LogTransactionNode(currentNode);
-
-				backendQuery = pgstat_get_backend_current_activity(
-					currentNode->initiatorProc->pid, false);
-				LogDistributedDeadlockDebugMessage(backendQuery);
 
 				if (timestamptz_cmp_internal(currentTimestamp, youngestTimestamp) == 1)
 				{
@@ -179,7 +173,8 @@ CheckForDistributedDeadlocks(void)
  * while traversing the graph).
  *
  * Finding a cycle  indicates a distributed deadlock and the function returns
- * true on that case.
+ * true on that case. Also, the deadlockPath is filled with the transaction
+ * nodes that form the cycle.
  */
 static bool
 CheckDeadlockForTransactionNode(TransactionNode *startingTransactionNode,
@@ -221,7 +216,7 @@ CheckDeadlockForTransactionNode(TransactionNode *startingTransactionNode,
 				currentWaitForCell);
 
 			/*
-			 * We add both the waiting node and its waiter to simplify finding the
+			 * We add both the waiting node and its parent to simplify finding the
 			 * deadlock path.
 			 */
 			waitingTransactionNodes =
@@ -254,25 +249,22 @@ FindDeadlockPath(List *waitingTransactionList, List **deadlockPath)
 
 		waitingTransactionList = list_delete_first(waitingTransactionList);
 
-		waitingTransactionList = RemoveElementsUntilTransactionNodeFound(
-			waitingTransactionList,
-			waitingTransaction);
+		/* delete all the other paths up to waitingTransaction from the graph */
+		waitingTransactionList =
+			RemoveElementsUptoNode(waitingTransactionList, waitingTransaction);
 	}
 }
 
 
 /*
- * RemoveElementsUntilTransactionNodeFound gets a transaction list and a
- * transactionNode. The function iterates on the list and removes all the
- * nodes until the transactionNode is found. There could be more than one
- * transactionNodes and the function removes all of the paths that reaches
- * the given transactionNode.
- *
- * TODO: update comment
+ * RemoveElementsUptoNode gets a transaction list and a transactionNode.
+ * The function searches for the given transactionNode in the list. If it
+ * finds any, the elements up to the last found node (including it) are
+ * removed from the list. If not any found, the list returned as it is.
  */
 static List *
-RemoveElementsUntilTransactionNodeFound(List *waitingTransactionList,
-										TransactionNode *transactionNode)
+RemoveElementsUptoNode(List *waitingTransactionList,
+					   TransactionNode *transactionNode)
 {
 	int toBeDeletedNodeIndex = 0;
 	int nodeIndex = 0;
@@ -291,7 +283,7 @@ RemoveElementsUntilTransactionNodeFound(List *waitingTransactionList,
 		}
 	}
 
-
+	/* if not found, simply return the input list */
 	if (toBeDeletedNodeIndex == 0)
 	{
 		return waitingTransactionList;
@@ -463,6 +455,7 @@ GetOrCreateTransactionNode(HTAB *adjacencyList, DistributedTransactionId *transa
 	if (!found)
 	{
 		transactionNode->waitsFor = NIL;
+		transactionNode->initiatorProc = NULL;
 	}
 
 	return transactionNode;
@@ -626,7 +619,6 @@ static void
 LogTransactionNode(TransactionNode *transactionNode)
 {
 	StringInfo logMessage = NULL;
-
 	DistributedTransactionId *transactionId = NULL;
 
 	if (!LogDistributedDeadlockDetection)
@@ -645,6 +637,15 @@ LogTransactionNode(TransactionNode *transactionNode)
 	appendStringInfo(logMessage, "[WaitsFor transaction numbers: %s]",
 					 WaitsForToString(transactionNode->waitsFor));
 
+	/* log the backend query if the proc is associated with the transaction */
+	if (transactionNode->initiatorProc != NULL)
+	{
+		const char *backendQuery =
+			pgstat_get_backend_current_activity(transactionNode->initiatorProc->pid,
+												false);
+
+		appendStringInfo(logMessage, "[Backend Query: %s]", backendQuery);
+	}
 
 	LogDistributedDeadlockDebugMessage(logMessage->data);
 }
