@@ -75,6 +75,9 @@ typedef struct MaintenanceDaemonDBData
 } MaintenanceDaemonDBData;
 
 
+/* config variable for distributed deadlock detection timeout */
+double DistributedDeadlockDetectionTimeoutFactor = 2.0;
+
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 static MaintenanceDaemonControlData *MaintenanceDaemonControl = NULL;
 
@@ -250,28 +253,33 @@ CitusMaintenanceDaemonMain(Datum main_arg)
 	{
 		int rc;
 		int latchFlags = WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH;
-		int timeout = 1000; /* wake up at least every so often */
+		double timeout = 0;
 		bool foundDeadlock = false;
 
 		CHECK_FOR_INTERRUPTS();
-
 		/*
 		 * Perform Work.  If a specific task needs to be called sooner than
 		 * timeout indicates, it's ok to lower it to that value.  Expensive
 		 * tasks should do their own time math about whether to re-run checks.
 		 */
 
+		/*
+		 * If we find any deadlocks, run the distributed deadlock detection
+		 * more often since it is likely that that are other deadlocks needs to
+		 * be resolved.
+		 */
+		if (foundDeadlock)
+		{
+			timeout = 100.0;
+		}
+		else
+		{
+			 timeout = DistributedDeadlockDetectionTimeoutFactor * DeadlockTimeout;
+		}
 
 		StartTransactionCommand();
 		foundDeadlock = CheckForDistributedDeadlocks();
 		CommitTransactionCommand();
-
-		if (foundDeadlock)
-		{
-			/* check again faster in case there are more deadlocks */
-			timeout = 100;
-		}
-
 
 		/*
 		 * Wait until timeout, or until somebody wakes us up.

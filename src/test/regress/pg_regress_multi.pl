@@ -236,6 +236,7 @@ push(@pgOptions, '-c', "citus.remote_task_check_interval=1ms");
 push(@pgOptions, '-c', "citus.shard_replication_factor=2");
 push(@pgOptions, '-c', "citus.node_connection_timeout=${connectionTimeout}");
 push(@pgOptions, '-c', "citus.log_distributed_deadlock_detection=on");
+push(@pgOptions, '-c', "citus.distributed_deadlock_detection_factor=0.5");
 
 # Add externally added options last, so they overwrite the default ones above
 for my $option (@userPgOptions)

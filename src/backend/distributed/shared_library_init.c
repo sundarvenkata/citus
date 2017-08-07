@@ -62,6 +62,7 @@ static void multi_log_hook(ErrorData *edata);
 static void CreateRequiredDirectories(void);
 static void RegisterCitusConfigVariables(void);
 static void WarningForEnableDeadlockPrevention(bool newval, void *extra);
+static void WarningForDeadlockTimeout(double newval, void *extra);
 static void NormalizeWorkerListPath(void);
 
 
@@ -405,6 +406,18 @@ RegisterCitusConfigVariables(void)
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);
+
+	DefineCustomRealVariable(
+		"citus.distributed_deadlock_detection_factor",
+		gettext_noop("Sets the time to wait before checking for distributed "
+					 "deadlocks. The value is multiplied with Postgres' "
+					 "deadlock_timeout setting."),
+		NULL,
+		&DistributedDeadlockDetectionTimeoutFactor,
+		2.0, 0.1, 1000.0,
+		PGC_USERSET,
+		0,
+		NULL, WarningForDeadlockTimeout, NULL);
 
 	DefineCustomBoolVariable(
 		"citus.enable_deadlock_prevention",
@@ -766,6 +779,22 @@ WarningForEnableDeadlockPrevention(bool newval, void *extra)
 							 "no effect. The flag will be removed in the next release.")));
 }
 
+
+/*
+ * We don't want our users to set this value to less than 1.0. We intend that only for testing.
+ */
+static void
+WarningForDeadlockTimeout(double newval, void *extra)
+{
+	if (newval < 1.0)
+	{
+		ereport(WARNING, (errcode(ERRCODE_WARNING_DEPRECATED_FEATURE),
+						  errmsg("citus.distributed_deadlock_timeout_factor "
+								 "should not be set below 1.0 on production "
+								 "workloads. Values less than 1.0 is mostly allowed "
+								 "for testing purposes.")));
+	}
+}
 
 /*
  * NormalizeWorkerListPath converts the path configured via
