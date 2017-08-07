@@ -49,6 +49,7 @@
 #include "optimizer/paths.h"
 #include "utils/guc.h"
 #include "utils/guc_tables.h"
+#include "utils/memutils.h"
 
 /* marks shared object as one loadable by the postgres version compiled against */
 PG_MODULE_MAGIC;
@@ -57,6 +58,7 @@ static char *CitusVersion = CITUS_VERSION;
 
 void _PG_init(void);
 
+static void multi_log_hook(ErrorData *edata);
 static void CreateRequiredDirectories(void);
 static void RegisterCitusConfigVariables(void);
 static void NormalizeWorkerListPath(void);
@@ -168,6 +170,9 @@ _PG_init(void)
 	set_rel_pathlist_hook = multi_relation_restriction_hook;
 	set_join_pathlist_hook = multi_join_restriction_hook;
 
+	/* register hook for error messages */
+	emit_log_hook = multi_log_hook;
+
 	InitializeMaintenanceDaemon();
 
 	/* organize that task tracker is started once server is up */
@@ -184,6 +189,32 @@ _PG_init(void)
 	{
 		SetConfigOption("allow_system_table_mods", "true", PGC_POSTMASTER,
 						PGC_S_OVERRIDE);
+	}
+}
+
+
+/*
+ * multi_log_hook intercepts postgres log commands. We use this to show the user a
+ * meaningful error message when a process receives a SIGINT from the distributed
+ * deadlock detector.
+ */
+static void
+multi_log_hook(ErrorData *edata)
+{
+	if (edata->elevel == ERROR && edata->sqlerrcode == ERRCODE_QUERY_CANCELED &&
+		MyBackendGotKilledDueToDeadlock())
+	{
+		MemoryContext oldContext = NULL;
+
+		oldContext = MemoryContextSwitchTo(ErrorContext);
+
+		edata->sqlerrcode = ERRCODE_T_R_DEADLOCK_DETECTED;
+		edata->message = "distributed deadlock detected and to resolve the deadlock "
+						 "this backend is cancelled";
+		edata->detail = "Set citus.log_distributed_deadlock_detection to 'on' "
+						"and check server log for details.";
+
+		MemoryContextSwitchTo(oldContext);
 	}
 }
 

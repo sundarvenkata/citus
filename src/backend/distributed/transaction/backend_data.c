@@ -547,10 +547,39 @@ KillBackendDueToDeadlock(PGPROC *proc)
 		backendData->killedDueToDeadlock = true;
 		SpinLockRelease(&backendData->mutex);
 
-		kill(proc->pid, SIGINT);
+		if (kill(proc->pid, SIGINT) != 0)
+		{
+			ereport(WARNING,
+					(errmsg("attempted to cancel this backend (pid: %d) to resolve a "
+							"distributed deadlock but the backend could not "
+							"be cancelled", proc->pid)));
+		}
 	}
 	else
 	{
 		SpinLockRelease(&backendData->mutex);
 	}
+}
+
+
+/*
+ * MyBackendGotKilledDueToDeadlock returns whether the current distributed
+ * transaction was killed due to a deadlock. If the backend is not in a
+ * distributed transaction, the function returns false.
+ */
+bool
+MyBackendGotKilledDueToDeadlock(void)
+{
+	bool killedDueToDeadlock = false;
+
+	SpinLockAcquire(&MyBackendData->mutex);
+
+	if (IsInDistributedTransaction(MyBackendData))
+	{
+		killedDueToDeadlock = MyBackendData->killedDueToDeadlock;
+	}
+
+	SpinLockRelease(&MyBackendData->mutex);
+
+	return killedDueToDeadlock;
 }

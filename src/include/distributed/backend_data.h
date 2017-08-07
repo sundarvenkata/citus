@@ -40,5 +40,6 @@ extern void UnSetDistributedTransactionId(void);
 extern void AssignDistributedTransactionId(void);
 extern void GetBackendDataForProc(PGPROC *proc, BackendData *result);
 extern void KillBackendDueToDeadlock(PGPROC *proc);
+extern bool MyBackendGotKilledDueToDeadlock(void);
 
 #endif /* BACKEND_DATA_H */
