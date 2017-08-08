@@ -14,6 +14,15 @@ SELECT create_distributed_table('the_table', 'a');
 
 INSERT INTO the_table (a, b) VALUES (1, 1);
 INSERT INTO the_table (a, b) VALUES (2, 1);
+-- simluate actually having secondary nodes
+SELECT * FROM pg_dist_node;
+ nodeid | groupid | nodename  | nodeport | noderack | hasmetadata | isactive | noderole | nodecluster 
+--------+---------+-----------+----------+----------+-------------+----------+----------+-------------
+      1 |       1 | localhost |    57637 | default  | f           | t        | primary  | default
+      2 |       2 | localhost |    57638 | default  | f           | t        | primary  | default
+(2 rows)
+
+UPDATE pg_dist_node SET noderole = 'secondary';
 SET citus.read_from_secondaries TO 'always';
 -- inserts are disallowed
 INSERT INTO the_table (a, b) VALUES (1, 2);
@@ -30,4 +39,5 @@ SELECT a FROM the_table;
 ERROR:  writing to worker nodes is not currently allowed
 DETAIL:  citus.read_from_secondaries is set to 'always'
 SET citus.read_from_secondaries TO 'never';
+UPDATE pg_dist_node SET noderole = 'primary';
 DROP TABLE the_table;
