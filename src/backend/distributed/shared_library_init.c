@@ -663,7 +663,7 @@ RegisterCitusConfigVariables(void)
 		NULL,
 		&ReadFromSecondaries,
 		READ_FROM_SECONDARIES_NEVER, read_from_secondaries_options,
-		PGC_USERSET,
+		PGC_SU_BACKEND,
 		0,
 		NULL, NULL, NULL);
 
