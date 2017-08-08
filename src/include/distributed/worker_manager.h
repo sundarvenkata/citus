@@ -64,6 +64,8 @@ extern WorkerNode * WorkerGetRoundRobinCandidateNode(List *workerNodeList,
 extern WorkerNode * WorkerGetLocalFirstCandidateNode(List *currentNodeList);
 extern uint32 ActivePrimaryNodeCount(void);
 extern List * ActivePrimaryNodeList(void);
+extern uint32 ActiveReadableNodeCount(void);
+extern List * ActiveReadableNodeList(void);
 extern WorkerNode * FindWorkerNode(char *nodeName, int32 nodePort);
 extern WorkerNode * FindWorkerNodeAnyCluster(char *nodeName, int32 nodePort);
 extern List * ReadWorkerNodes(void);
