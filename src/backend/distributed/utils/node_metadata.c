@@ -305,6 +305,24 @@ WorkerNodeIsPrimary(WorkerNode *worker)
 
 
 /*
+ * WorkerNodeIsSecondary returns whether the argument represents a secondary node.
+ */
+bool
+WorkerNodeIsSecondary(WorkerNode *worker)
+{
+	Oid secondaryRole = SecondaryNodeRoleId();
+
+	/* if nodeRole does not yet exist, all nodes are primary nodes */
+	if (secondaryRole == InvalidOid)
+	{
+		return false;
+	}
+
+	return worker->nodeRole == secondaryRole;
+}
+
+
+/*
  * PrimaryNodeForGroup returns the (unique) primary in the specified group.
  *
  * If there are any nodes in the requested group and groupContainsNodes is not NULL
