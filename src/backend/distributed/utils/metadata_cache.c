@@ -538,11 +538,13 @@ LookupNodeForGroup(uint32 groupId)
 			ereport(ERROR, (errmsg("node group %u does not have a primary node",
 								   groupId)));
 		}
+
 		case USE_SECONDARY_NODES_ALWAYS:
 		{
 			ereport(ERROR, (errmsg("node group %u does not have a secondary node",
 								   groupId)));
 		}
+
 		default:
 		{
 			ereport(FATAL, (errmsg("unrecognized value for use_secondary_nodes")));
