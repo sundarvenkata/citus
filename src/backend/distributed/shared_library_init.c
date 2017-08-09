@@ -90,9 +90,9 @@ static const struct config_enum_entry shard_placement_policy_options[] = {
 	{ NULL, 0, false }
 };
 
-static const struct config_enum_entry read_from_secondaries_options[] = {
-	{ "never", READ_FROM_SECONDARIES_NEVER, false },
-	{ "always", READ_FROM_SECONDARIES_ALWAYS, false },
+static const struct config_enum_entry use_secondary_nodes_options[] = {
+	{ "never", USE_SECONDARY_NODES_NEVER, false },
+	{ "always", USE_SECONDARY_NODES_ALWAYS, false },
 	{ NULL, 0, false }
 };
 
@@ -658,11 +658,11 @@ RegisterCitusConfigVariables(void)
 		NULL, NULL, NULL);
 
 	DefineCustomEnumVariable(
-		"citus.read_from_secondaries",
+		"citus.use_secondary_nodes",
 		gettext_noop("Sets the policy to use when choosing nodes for SELECT queries."),
 		NULL,
 		&ReadFromSecondaries,
-		READ_FROM_SECONDARIES_NEVER, read_from_secondaries_options,
+		USE_SECONDARY_NODES_NEVER, use_secondary_nodes_options,
 		PGC_SU_BACKEND,
 		0,
 		NULL, NULL, NULL);

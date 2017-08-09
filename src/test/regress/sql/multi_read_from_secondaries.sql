@@ -1,6 +1,6 @@
 ALTER SEQUENCE pg_catalog.pg_dist_shardid_seq RESTART 1600000;
 
-\c "dbname=regression options='-c\ citus.read_from_secondaries=always'"
+\c "dbname=regression options='-c\ citus.use_secondary_nodes=always'"
 
 CREATE TABLE dest_table (a int, b int);
 CREATE TABLE source_table (a int, b int);
@@ -8,7 +8,7 @@ CREATE TABLE source_table (a int, b int);
 -- attempts to change metadata should fail while reading from secondaries
 SELECT create_distributed_table('dest_table', 'a');
 
-\c "dbname=regression options='-c\ citus.read_from_secondaries=never'"
+\c "dbname=regression options='-c\ citus.use_secondary_nodes=never'"
 
 SELECT create_distributed_table('dest_table', 'a');
 SELECT create_distributed_table('source_table', 'a');
@@ -22,7 +22,7 @@ INSERT INTO source_table (a, b) VALUES (10, 10);
 SELECT * FROM pg_dist_node;
 UPDATE pg_dist_node SET noderole = 'secondary';
 
-\c "dbname=regression options='-c\ citus.read_from_secondaries=always'"
+\c "dbname=regression options='-c\ citus.use_secondary_nodes=always'"
 
 -- inserts are disallowed
 INSERT INTO dest_table (a, b) VALUES (1, 2);
@@ -37,6 +37,6 @@ SELECT a FROM dest_table;
 INSERT INTO dest_table (a, b)
   SELECT a, b FROM source_table;
 
-\c "dbname=regression options='-c\ citus.read_from_secondaries=never'"
+\c "dbname=regression options='-c\ citus.use_secondary_nodes=never'"
 UPDATE pg_dist_node SET noderole = 'primary';
 DROP TABLE dest_table;

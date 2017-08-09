@@ -332,13 +332,13 @@ WorkerNodeIsSecondary(WorkerNode *worker)
 bool
 WorkerNodeIsReadable(WorkerNode *workerNode)
 {
-	if (ReadFromSecondaries == READ_FROM_SECONDARIES_NEVER &&
+	if (ReadFromSecondaries == USE_SECONDARY_NODES_NEVER &&
 		WorkerNodeIsPrimary(workerNode))
 	{
 		return true;
 	}
 
-	if (ReadFromSecondaries == READ_FROM_SECONDARIES_ALWAYS &&
+	if (ReadFromSecondaries == USE_SECONDARY_NODES_ALWAYS &&
 		WorkerNodeIsSecondary(workerNode))
 	{
 		return true;
