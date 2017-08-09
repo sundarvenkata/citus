@@ -86,7 +86,7 @@ start_metadata_sync_to_node(PG_FUNCTION_ARGS)
 
 	EnsureCoordinator();
 	EnsureSuperUser();
-	EnsureCanRunModifications();
+	EnsureModificationsCanRun();
 	CheckCitusVersion(ERROR);
 
 	PreventTransactionChain(true, "start_metadata_sync_to_node");
