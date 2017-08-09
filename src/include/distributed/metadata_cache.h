@@ -22,8 +22,8 @@ extern bool EnableVersionChecks;
 /* managed via guc.c */
 typedef enum
 {
-	READ_FROM_SECONDARIES_NEVER = 0,
-	READ_FROM_SECONDARIES_ALWAYS = 1
+	USE_SECONDARY_NODES_NEVER = 0,
+	USE_SECONDARY_NODES_ALWAYS = 1
 } ReadFromSecondariesType;
 extern int ReadFromSecondaries;
 

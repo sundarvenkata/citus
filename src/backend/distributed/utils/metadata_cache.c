@@ -59,7 +59,7 @@
 
 
 /* user configuration */
-int ReadFromSecondaries = READ_FROM_SECONDARIES_NEVER;
+int ReadFromSecondaries = USE_SECONDARY_NODES_NEVER;
 
 /*
  * ShardCacheEntry represents an entry in the shardId -> ShardInterval cache.
@@ -202,7 +202,7 @@ PG_FUNCTION_INFO_V1(master_dist_local_group_cache_invalidate);
 
 /*
  * EnsureModificationsCanRun checks if the current node is in recovery mode or
- * citus.read_from_secondaries is 'alwaus'. If either is true the function errors out.
+ * citus.use_secondary_nodes is 'always'. If either is true the function errors out.
  */
 void
 EnsureModificationsCanRun(void)
@@ -213,10 +213,10 @@ EnsureModificationsCanRun(void)
 						errdetail("the database is in recovery mode")));
 	}
 
-	if (ReadFromSecondaries == READ_FROM_SECONDARIES_ALWAYS)
+	if (ReadFromSecondaries == USE_SECONDARY_NODES_ALWAYS)
 	{
 		ereport(ERROR, (errmsg("writing to worker nodes is not currently allowed"),
-						errdetail("citus.read_from_secondaries is set to 'always'")));
+						errdetail("citus.use_secondary_nodes is set to 'always'")));
 	}
 }
 
@@ -533,19 +533,19 @@ LookupNodeForGroup(uint32 groupId)
 
 	switch (ReadFromSecondaries)
 	{
-		case READ_FROM_SECONDARIES_NEVER:
+		case USE_SECONDARY_NODES_NEVER:
 		{
 			ereport(ERROR, (errmsg("node group %u does not have a primary node",
 								   groupId)));
 		}
-		case READ_FROM_SECONDARIES_ALWAYS:
+		case USE_SECONDARY_NODES_ALWAYS:
 		{
 			ereport(ERROR, (errmsg("node group %u does not have a secondary node",
 								   groupId)));
 		}
 		default:
 		{
-			ereport(FATAL, (errmsg("unrecognized value for read_from_secondaries")));
+			ereport(FATAL, (errmsg("unrecognized value for use_secondary_nodes")));
 		}
 	}
 }
