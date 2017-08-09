@@ -278,7 +278,7 @@ CreateDistributedPlan(PlannedStmt *localPlan, Query *originalQuery, Query *query
 
 	if (IsModifyCommand(query))
 	{
-		EnsureCanRunModifications();
+		EnsureModificationsCanRun();
 
 		if (InsertSelectIntoDistributedTable(originalQuery))
 		{

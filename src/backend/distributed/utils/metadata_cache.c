@@ -201,11 +201,11 @@ PG_FUNCTION_INFO_V1(master_dist_local_group_cache_invalidate);
 
 
 /*
- * EnsureCanRunModifications checks if the current node is in recovery mode or
+ * EnsureModificationsCanRun checks if the current node is in recovery mode or
  * citus.read_from_secondaries is 'alwaus'. If either is true the function errors out.
  */
 void
-EnsureCanRunModifications(void)
+EnsureModificationsCanRun(void)
 {
 	if (RecoveryInProgress())
 	{

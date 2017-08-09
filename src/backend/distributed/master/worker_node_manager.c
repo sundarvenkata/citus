@@ -332,7 +332,7 @@ ActivePrimaryNodeList(void)
 	HTAB *workerNodeHash = GetWorkerNodeHash();
 	HASH_SEQ_STATUS status;
 
-	EnsureCanRunModifications();
+	EnsureModificationsCanRun();
 
 	hash_seq_init(&status, workerNodeHash);
 

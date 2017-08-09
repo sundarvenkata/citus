@@ -92,7 +92,7 @@ extern bool CheckCitusVersion(int elevel);
 extern bool CheckAvailableVersion(int elevel);
 bool MajorVersionsCompatible(char *leftVersion, char *rightVersion);
 
-extern void EnsureCanRunModifications(void);
+extern void EnsureModificationsCanRun(void);
 
 /* access WorkerNodeHash */
 extern HTAB * GetWorkerNodeHash(void);
