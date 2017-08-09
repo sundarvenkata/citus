@@ -534,13 +534,19 @@ LookupNodeForGroup(uint32 groupId)
 	switch (ReadFromSecondaries)
 	{
 		case READ_FROM_SECONDARIES_NEVER:
+		{
 			ereport(ERROR, (errmsg("node group %u does not have a primary node",
 								   groupId)));
+		}
 		case READ_FROM_SECONDARIES_ALWAYS:
+		{
 			ereport(ERROR, (errmsg("node group %u does not have a secondary node",
 								   groupId)));
+		}
 		default:
+		{
 			ereport(FATAL, (errmsg("this should never happen")));
+		}
 	}
 }
 
