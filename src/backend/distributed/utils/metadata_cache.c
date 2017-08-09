@@ -491,6 +491,12 @@ ResolveGroupShardPlacement(GroupShardPlacement *groupShardPlacement,
 }
 
 
+/*
+ * LookupNodeForGroup searches the WorkerNodeHash for a worker which is a member of the
+ * given group and also readable (a primary if we're reading from primaries, a secondary
+ * if we're reading from secondaries). If such a node does not exist it emits an
+ * appropriate error message.
+ */
 static WorkerNode *
 LookupNodeForGroup(uint32 groupId)
 {
