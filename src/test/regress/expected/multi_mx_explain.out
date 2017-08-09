@@ -360,10 +360,8 @@ Custom Scan (Citus Router)
   Tasks Shown: All
   ->  Task
         Node: host=localhost port=57638 dbname=regression
-        ->  Bitmap Heap Scan on lineitem_mx_1220055 lineitem_mx
-              Recheck Cond: (l_orderkey = 5)
-              ->  Bitmap Index Scan on lineitem_mx_pkey_1220055
-                    Index Cond: (l_orderkey = 5)
+        ->  Index Scan using lineitem_mx_pkey_1220055 on lineitem_mx_1220055 lineitem_mx
+              Index Cond: (l_orderkey = 5)
 SELECT true AS valid FROM explain_xml($$
 	SELECT l_quantity FROM lineitem_mx WHERE l_orderkey = 5$$);
 t
