@@ -545,7 +545,7 @@ LookupNodeForGroup(uint32 groupId)
 		}
 		default:
 		{
-			ereport(FATAL, (errmsg("this should never happen")));
+			ereport(FATAL, (errmsg("unrecognized value for read_from_secondaries")));
 		}
 	}
 }
