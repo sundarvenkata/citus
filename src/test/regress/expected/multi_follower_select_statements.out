@@ -1,0 +1,74 @@
+\c - - - :follower_port
+-- the follower is in streaming replication, you can't do anything
+CREATE TABLE the_table (a int, b int);
+ERROR:  cannot execute CREATE TABLE in a read-only transaction
+\c - - - :master_port
+SELECT 1 FROM master_add_node('localhost', :worker_1_port);
+ ?column? 
+----------
+        1
+(1 row)
+
+SELECT 1 FROM master_add_node('localhost', :worker_2_port);
+ ?column? 
+----------
+        1
+(1 row)
+
+CREATE TABLE the_table (a int, b int);
+SELECT create_distributed_table('the_table', 'a');
+ create_distributed_table 
+--------------------------
+ 
+(1 row)
+
+INSERT INTO the_table (a, b) VALUES (1, 1);
+INSERT INTO the_table (a, b) VALUES (1, 2);
+\c - - - :follower_port
+\d
+           List of relations
+ Schema |   Name    | Type  |  Owner   
+--------+-----------+-------+----------
+ public | the_table | table | postgres
+(1 row)
+
+-- this should work, we're still sending queries to the primaries
+SELECT * FROM the_table;
+ a | b 
+---+---
+ 1 | 1
+ 1 | 2
+(2 rows)
+
+-- this is :follower_port but substitution doesn't work here
+\c "port=57700 dbname=regression options='-c\ citus.use_secondary_nodes=always'"
+-- this should fail because we haven't added any secondaries
+SELECT * FROM the_table;
+ERROR:  node group 2 does not have a secondary node
+\c - - - :master_port
+SELECT 1 FROM master_add_node('localhost', :follower_worker_1_port,
+  groupid => (SELECT groupid FROM pg_dist_node WHERE nodeport = :worker_1_port),
+  noderole => 'secondary');
+ ?column? 
+----------
+        1
+(1 row)
+
+SELECT 1 FROM master_add_node('localhost', :follower_worker_2_port,
+  groupid => (SELECT groupid FROM pg_dist_node WHERE nodeport = :worker_2_port),
+  noderole => 'secondary');
+ ?column? 
+----------
+        1
+(1 row)
+
+-- this is :follower_port but substitution doesn't work here
+\c "port=57700 dbname=regression options='-c\ citus.use_secondary_nodes=always'"
+-- now that we've added secondaries this should work
+SELECT * FROM the_table;
+ a | b 
+---+---
+ 1 | 1
+ 1 | 2
+(2 rows)
+

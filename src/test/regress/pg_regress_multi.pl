@@ -46,6 +46,7 @@ sub Usage()
 # Option parsing
 my $isolationtester = 0;
 my $vanillatest = 0;
+my $followercluster = 0;
 my $bindir = "";
 my $libdir = undef;
 my $pgxsdir = "";
@@ -70,6 +71,7 @@ my $serversAreShutdown = "TRUE";
 GetOptions(
     'isolationtester' => \$isolationtester,
     'vanillatest' => \$vanillatest,
+    'follower-cluster' => \$followercluster,
     'bindir=s' => \$bindir,
     'libdir=s' => \$libdir,
     'pgxsdir=s' => \$pgxsdir,
@@ -216,6 +218,13 @@ for (my $workerIndex = 1; $workerIndex <= $workerCount; $workerIndex++) {
     push(@workerPorts, $workerPort);
 }
 
+my $followerCoordPort = 57700;
+my @followerWorkerPorts = ();
+for (my $workerIndex = 1; $workerIndex <= $workerCount; $workerIndex++) {
+    my $workerPort = $followerCoordPort + $workerIndex;
+    push(@followerWorkerPorts, $workerPort);
+}
+
 my $host = "localhost";
 my $user = "postgres";
 my @pgOptions = ();
@@ -235,6 +244,12 @@ push(@pgOptions, '-c', "citus.task_tracker_delay=10ms");
 push(@pgOptions, '-c', "citus.remote_task_check_interval=1ms");
 push(@pgOptions, '-c', "citus.shard_replication_factor=2");
 push(@pgOptions, '-c', "citus.node_connection_timeout=${connectionTimeout}");
+
+if ($followercluster)
+{
+  push(@pgOptions, '-c', "max_wal_senders=10");
+  push(@pgOptions, '-c', "hot_standby=on");
+}
 
 # Add externally added options last, so they overwrite the default ones above
 for my $option (@userPgOptions)
@@ -271,6 +286,12 @@ for my $port (@workerPorts)
     system("rm", ('-rf', "tmp_check/worker.$port")) == 0 or die "Could not remove worker directory";
 }
 
+system("rm", ('-rf', 'tmp_check/master-follower')) == 0 or die "Could not remove master directory";
+for my $port (@followerWorkerPorts)
+{
+    system("rm", ('-rf', "tmp_check/follower.$port")) == 0 or die "Could not remove worker directory";
+}
+
 # Prepare directory in which 'psql' has some helpful variables for locating the workers
 system("mkdir", ('-p', "tmp_check/tmp-bin")) == 0
 	or die "Could not create tmp-bin directory";
@@ -279,12 +300,18 @@ sysopen my $fh, "tmp_check/tmp-bin/psql", O_CREAT|O_TRUNC|O_RDWR, 0700
 print $fh "#!/bin/bash\n";
 print $fh "exec psql ";
 print $fh "--variable=master_port=$masterPort ";
+print $fh "--variable=follower_port=$followerCoordPort ";
 print $fh "--variable=default_user=$user ";
 print $fh "--variable=SHOW_CONTEXT=always ";
 for my $workeroff (0 .. $#workerPorts)
 {
 	my $port = $workerPorts[$workeroff];
 	print $fh "--variable=worker_".($workeroff+1)."_port=$port ";
+}
+for my $workeroff (0 .. $#followerWorkerPorts)
+{
+	my $port = $followerWorkerPorts[$workeroff];
+	print $fh "--variable=follower_worker_".($workeroff+1)."_port=$port ";
 }
 print $fh "\"\$@\"\n"; # pass on the commandline arguments
 close $fh;
@@ -294,6 +321,16 @@ for my $port (@workerPorts)
 {
     system("mkdir", ('-p', "tmp_check/worker.$port/log")) == 0
         or die "Could not create worker directory";
+}
+
+if ($followercluster)
+{
+    system("mkdir", ('-p', 'tmp_check/master-follower/log')) == 0 or die "Could not create follower directory";
+    for my $port (@followerWorkerPorts)
+    {
+        system("mkdir", ('-p', "tmp_check/follower.$port/log")) == 0
+            or die "Could not create worker directory";
+    }
 }
 
 # Create new data directories, copy workers for speed
@@ -320,6 +357,20 @@ sub ShutdownServers()
             system("$bindir/pg_ctl",
                    ('stop', '-w', '-D', "tmp_check/worker.$port/data")) == 0
                 or warn "Could not shutdown worker server";
+        }
+
+        if ($followercluster)
+        {
+            system("$bindir/pg_ctl",
+                   ('stop', '-w', '-D', 'tmp_check/master-follower/data')) == 0
+                or warn "Could not shutdown worker server";
+
+            for my $port (@followerWorkerPorts)
+            {
+                system("$bindir/pg_ctl",
+                       ('stop', '-w', '-D', "tmp_check/follower.$port/data")) == 0
+                    or warn "Could not shutdown worker server";
+            }
         }
         $serversAreShutdown = "TRUE";
     }
@@ -370,6 +421,41 @@ for my $port (@workerPorts)
             '-D', "tmp_check/worker.$port/data",
             '-l', "tmp_check/worker.$port/log/postmaster.log")) == 0
         or die "Could not start worker server";
+}
+
+# Setup the follower nodes
+if ($followercluster)
+{
+    system("$bindir/pg_basebackup",
+           ("-D", "tmp_check/master-follower/data", "--host=$host", "--port=$masterPort",
+            "--username=$user", "--no-sync", "-R")) == 0
+      or die 'could not take basebackup';
+
+    for my $offset (0 .. $#workerPorts)
+    {
+        my $workerPort = $workerPorts[$offset];
+        my $followerPort = $followerWorkerPorts[$offset];
+        system("$bindir/pg_basebackup",
+               ("-D", "tmp_check/follower.$followerPort/data", "--host=$host", "--port=$workerPort",
+                "--username=$user", "--no-sync", "-R")) == 0
+            or die "Could not take basebackup";
+    }
+
+    system("$bindir/pg_ctl",
+           ('start', '-w',
+            '-o', join(" ", @pgOptions)." -c port=$followerCoordPort",
+           '-D', 'tmp_check/master-follower/data', '-l', 'tmp_check/master-follower/log/postmaster.log')) == 0
+        or die "Could not start master follower server";
+
+    for my $port (@followerWorkerPorts)
+    {
+        system("$bindir/pg_ctl",
+               ('start', '-w',
+                '-o', join(" ", @pgOptions)." -c port=$port",
+                '-D', "tmp_check/follower.$port/data",
+                '-l', "tmp_check/follower.$port/log/postmaster.log")) == 0
+            or die "Could not start follower server";
+    }
 }
 
 ###
@@ -465,7 +551,7 @@ elsif ($isolationtester)
 {
     push(@arguments, "--dbname=regression");
     system("$isolationRegress", @arguments) == 0
-	or die "Could not run isolation tests";
+      or die "Could not run isolation tests";
 }
 else
 {
