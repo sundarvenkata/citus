@@ -71,7 +71,12 @@ JobExecutorType(MultiPlan *multiPlan)
 												 " queries on the workers.")));
 	}
 
-	workerNodeList = ActivePrimaryNodeList();
+	if (multiPlan->operation != CMD_SELECT)
+	{
+		ereport(FATAL, (errmsg("we assume only SELECT queries hit this point")));
+	}
+
+	workerNodeList = ActiveReadableNodeList();
 	workerNodeCount = list_length(workerNodeList);
 	taskCount = list_length(job->taskList);
 	tasksPerNode = taskCount / ((double) workerNodeCount);

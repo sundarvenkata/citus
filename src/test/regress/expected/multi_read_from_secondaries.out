@@ -1,19 +1,27 @@
 ALTER SEQUENCE pg_catalog.pg_dist_shardid_seq RESTART 1600000;
 \c "dbname=regression options='-c\ citus.read_from_secondaries=always'"
-CREATE TABLE the_table (a int, b int);
+CREATE TABLE dest_table (a int, b int);
+CREATE TABLE source_table (a int, b int);
 -- attempts to change metadata should fail while reading from secondaries
-SELECT create_distributed_table('the_table', 'a');
+SELECT create_distributed_table('dest_table', 'a');
 ERROR:  writing to worker nodes is not currently allowed
 DETAIL:  citus.read_from_secondaries is set to 'always'
 \c "dbname=regression options='-c\ citus.read_from_secondaries=never'"
-SELECT create_distributed_table('the_table', 'a');
+SELECT create_distributed_table('dest_table', 'a');
  create_distributed_table 
 --------------------------
  
 (1 row)
 
-INSERT INTO the_table (a, b) VALUES (1, 1);
-INSERT INTO the_table (a, b) VALUES (2, 1);
+SELECT create_distributed_table('source_table', 'a');
+ create_distributed_table 
+--------------------------
+ 
+(1 row)
+
+INSERT INTO dest_table (a, b) VALUES (1, 1);
+INSERT INTO dest_table (a, b) VALUES (2, 1);
+INSERT INTO source_table (a, b) VALUES (10, 10);
 -- simluate actually having secondary nodes
 SELECT * FROM pg_dist_node;
  nodeid | groupid | nodename  | nodeport | noderack | hasmetadata | isactive | noderole | nodecluster 
@@ -25,20 +33,29 @@ SELECT * FROM pg_dist_node;
 UPDATE pg_dist_node SET noderole = 'secondary';
 \c "dbname=regression options='-c\ citus.read_from_secondaries=always'"
 -- inserts are disallowed
-INSERT INTO the_table (a, b) VALUES (1, 2);
+INSERT INTO dest_table (a, b) VALUES (1, 2);
 ERROR:  writing to worker nodes is not currently allowed
 DETAIL:  citus.read_from_secondaries is set to 'always'
 -- router selects are allowed
-SELECT a FROM the_table WHERE a = 1;
+SELECT a FROM dest_table WHERE a = 1;
  a 
 ---
  1
 (1 row)
 
--- real-time selects are not allowed
-SELECT a FROM the_table;
+-- real-time selects are also allowed
+SELECT a FROM dest_table;
+ a 
+---
+ 1
+ 2
+(2 rows)
+
+-- insert into is definitely not allowed
+INSERT INTO dest_table (a, b)
+  SELECT a, b FROM source_table;
 ERROR:  writing to worker nodes is not currently allowed
 DETAIL:  citus.read_from_secondaries is set to 'always'
 \c "dbname=regression options='-c\ citus.read_from_secondaries=never'"
 UPDATE pg_dist_node SET noderole = 'primary';
-DROP TABLE the_table;
+DROP TABLE dest_table;
