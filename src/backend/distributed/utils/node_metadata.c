@@ -323,6 +323,29 @@ WorkerNodeIsSecondary(WorkerNode *worker)
 
 
 /*
+ * WorkerNodeIsReadable returns whether we're allowed to send SELECT queries to this
+ * node.
+ */
+bool
+WorkerNodeIsReadable(WorkerNode *workerNode)
+{
+	if (ReadFromSecondaries == READ_FROM_SECONDARIES_NEVER &&
+		WorkerNodeIsPrimary(workerNode))
+	{
+		return true;
+	}
+
+	if (ReadFromSecondaries == READ_FROM_SECONDARIES_ALWAYS &&
+		WorkerNodeIsSecondary(workerNode))
+	{
+		return true;
+	}
+
+	return false;
+}
+
+
+/*
  * PrimaryNodeForGroup returns the (unique) primary in the specified group.
  *
  * If there are any nodes in the requested group and groupContainsNodes is not NULL

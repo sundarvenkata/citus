@@ -72,6 +72,7 @@ extern uint32 GroupForNode(char *nodeName, int32 nodePorT);
 extern WorkerNode * PrimaryNodeForGroup(uint32 groupId, bool *groupContainsNodes);
 extern bool WorkerNodeIsPrimary(WorkerNode *worker);
 extern bool WorkerNodeIsSecondary(WorkerNode *worker);
+extern bool WorkerNodeIsReadable(WorkerNode *worker);
 
 /* Function declarations for worker node utilities */
 extern int CompareWorkerNodes(const void *leftElement, const void *rightElement);
